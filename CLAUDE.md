@@ -27,6 +27,12 @@ quyết định cách xử lý:
 Đây là **suy luận của FE**, Jira không có trường nào ghi "nguồn". Logic nằm ở
 `frontend/src/utils.ts` → `taskSource()`. Sửa cách phân nhóm thì sửa ở đó.
 
+**Bẫy: thứ tự kiểm tra trong `taskSource()` là bắt buộc.** Improvement cũng có
+`parent` (trỏ tới Epic, vd HWE-482 → HWE-4 "Master Data"), nên phải xét
+`issuetype` **trước** rồi mới xét `parentKey`. Đảo lại là mọi Improvement bị
+gom nhầm vào "Sub-task từ BE". Đã xác minh trên dữ liệu thật: Improvement do
+sney tạo, sub-task `FE_YYMMDD:` do Jame tạo.
+
 **Việc 2 — báo cáo cuối ngày.** Mỗi tối Bimo post một comment tổng kết lên issue
 báo cáo của từng dự án, mention BA/QA để họ nắm tiến độ. Trước đây gõ tay, giờ
 tool thống kê sẵn rồi Bimo chỉ soát lại.
@@ -51,12 +57,32 @@ nên không cần sửa gì bên FE.
 
 ### accountId đã biết
 
-| Người | Vai trò | accountId |
+| Người | accountId | Ghi chú |
 | --- | --- | --- |
-| MOBI (Bimo) | FE | `712020:3f2962d5-3b89-4885-985c-444b4cd4f5cc` |
-| sney | BA / QA | `712020:d22b3123-52e3-46cb-b435-4b9a30fb166f` |
-| Ruby | PM | `712020:cc414e81-af9e-4033-8159-e7ed19785489` |
-| Sumi | TMS | `70121:5b5e92a5-862c-4edc-994f-c02ab8a3280f` |
+| MOBI (Bimo) | `712020:3f2962d5-3b89-4885-985c-444b4cd4f5cc` | FE — chủ tool |
+| sney | `712020:d22b3123-52e3-46cb-b435-4b9a30fb166f` | BA/QA — mention ở báo cáo HWE |
+| Ruby | `712020:cc414e81-af9e-4033-8159-e7ed19785489` | mention ở **cả hai** báo cáo |
+| Sumi | `70121:5b5e92a5-862c-4edc-994f-c02ab8a3280f` | mention ở báo cáo TMS |
+
+(Vai trò cụ thể của Ruby và Sumi chưa được xác nhận — bảng này chỉ ghi chắc
+chắn ai được mention ở đâu, theo lịch sử comment thật. Jame là BE, tạo các
+sub-task `FE_YYMMDD:`.)
+
+### Custom field trên site này
+
+Chưa dùng tới, ghi lại để khỏi dò lại (id custom field khác nhau theo từng site):
+
+| Field | id | Giá trị mẫu |
+| --- | --- | --- |
+| Sprint | `customfield_10020` | `HWE Sprint 5` |
+| Tech Area | `customfield_10205` | `FE` |
+| Path/URL | `customfield_10340` | link màn hình trên staging |
+| Epic Link | `customfield_10014` | `HWE-4` |
+| Story Points | `customfield_10015` là Start date — **không** phải story point | |
+
+MCP mặc định trả `view: compact` và **bỏ hết custom field**. Muốn thấy phải
+truyền `view: 'evidence'`; giá trị nằm ở `fields.customFields`, không phải
+`customfield_*` ở cấp trên cùng.
 
 ## 3. Mẫu báo cáo — sao chép, đừng "sửa cho đẹp"
 
@@ -174,3 +200,86 @@ frontend/
 - `npm run type-check` ở **cả hai** thư mục. Không có pre-commit hook.
 - `npm run build` bên frontend nếu có đụng JSX.
 - **Không commit `.env`.** Đã gitignore, nhưng kiểm lại `git status` vẫn tốt.
+
+---
+
+## 8. Môi trường và thông tin sẵn có
+
+**Site Jira**: `jakenm.atlassian.net`
+**cloudId**: `edd86293-4d11-4839-b762-9a53b31126d7` — MCP Atlassian nhận thẳng
+chuỗi `jakenm.atlassian.net` làm `cloudId` nên thường không cần UUID này.
+
+**Token** nằm ở `backend/.env`, lấy từ `D:\Note\jira-tools\.jira-token.dpapi`
+(mã hoá DPAPI, chỉ giải được bằng chính user Windows này, trên chính máy này).
+Token thuộc tài khoản **`trungthinh.1799@gmail.com`** — KHÔNG phải email đăng
+nhập của phiên Claude. Dùng sai email sẽ bị 404 trông như "không tìm thấy
+issue" chứ không báo lỗi xác thực.
+
+Giải mã lại khi cần:
+
+```powershell
+$sec = Get-Content "D:\Note\jira-tools\.jira-token.dpapi" | ConvertTo-SecureString
+$tok = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+         [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec))
+```
+
+**Cổng**: backend `4180`, frontend `5180`. Chọn tránh xa các dự án khác của
+Bimo (HWE ERP dùng 5174, TMS 5173).
+
+**Git**: remote `origin` trỏ
+<https://github.com/trungthinh99/jira-tool>, nhánh `main`. Push không cần nhập
+gì — Windows Credential Manager đã có sẵn credential. `gh` CLI **chưa cài**,
+đừng gọi.
+
+### Thư mục liên quan
+
+| Đường dẫn | Nội dung |
+| --- | --- |
+| `D:\Note\jira-tools\` | Script PowerShell upload ảnh lên Jira + đổi attachment id sang media UUID. Đọc README ở đó nếu cần đính ảnh vào comment. |
+| `D:\hwashin-erp\` | Dự án ERP riêng, **không liên quan** tới tool này. Quy ước bên đó (UI tiếng Hàn, Tailwind token riêng) không áp dụng ở đây. |
+| `D:\hwashin-erp\docs\jira-story-handoff.md` | Quy trình bàn giao một story: chụp ảnh kết quả → comment kèm ảnh → chuyển Review → tạo task QA. **Khác việc mà tool này làm** (báo cáo hàng ngày), nhưng cùng một hệ Jira và cùng các accountId. Đọc khi Bimo nhắc tới bàn giao story hoặc dán link Jira story. |
+
+## 9. Trạng thái hiện tại — cái gì đã chạy thật, cái gì chưa
+
+Tính tới **21/09/2026**, tool đã dựng xong và chạy với dữ liệu Jira thật.
+
+**Đã kiểm chứng bằng dữ liệu thật:**
+
+| Hạng mục | Kết quả |
+| --- | --- |
+| Menu Thông báo | 4 task To Do thật (HWE-474/476/478/480), nhóm đúng "Sub-task từ BE" |
+| Thống kê ngày 21/09 | 3 task HWE Done → tự điền 100% |
+| Thống kê ngày 18/09, tab TMS | 9 task DT, mention tự đổi `@Sumi @Ruby`, đích sang PPP-308 |
+| Tách project | 20 HWE / 9 DT, không lẫn |
+| Prefill "Next task" | Đọc ngược từ comment gần nhất, đúng cho cả hai dự án |
+| Preview | Khớp mẫu nhà, tiếng Việt không lỗi font |
+| type-check + build | Sạch cả hai phía |
+
+**CHƯA chạy thật — cần Bimo bấm thử:**
+
+- **Nút "Đăng báo cáo"** — sẽ post comment thật lên PPP-354 / PPP-308.
+- **Nút "Bắt đầu"** ở Inbox — sẽ đổi trạng thái task thật sang In Progress.
+
+Cả hai đều ghi lên Jira nên tôi không tự chạy. Code đã xong; nếu ADF có gì lệch
+mẫu thì sửa `adf.ts`. **Khi kiểm thử, đừng post thử lên PPP-354/PPP-308** — đó
+là issue báo cáo thật mà BA và PM đang đọc. Tạo issue nháp riêng để thử.
+
+### Nguyên tắc: không tự ý ghi lên Jira
+
+Việc đọc (JQL, đọc comment) thì thoải mái. Việc **ghi** — post comment, đổi
+trạng thái, tạo issue — phải hỏi Bimo trước, kể cả khi đang sửa code và muốn
+kiểm chứng. Jira này là nơi làm việc thật của cả team, không phải môi trường
+thử.
+
+## 10. Hướng phát triển đã bàn nhưng chưa làm
+
+Bimo chưa yêu cầu, ghi lại để khỏi bàn lại từ đầu:
+
+- **Tự động đăng báo cáo theo giờ** — backend đã tách riêng nên thêm cron được;
+  nhưng bản chất tool là "Bimo soát rồi mới đăng", tự động hoàn toàn sẽ mất
+  bước đó.
+- **Deploy lên server** — hiện chạy local hai terminal. Muốn deploy thì phải
+  tính lại chỗ giữ token.
+- **Đính ảnh vào báo cáo** — script sẵn ở `D:\Note\jira-tools\`, chưa nối vào
+  tool.
+- **Nới JQL thống kê** — xem mục 4, đã cân nhắc và cố ý không làm.
