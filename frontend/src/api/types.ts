@@ -7,7 +7,11 @@ export interface IssueSummary {
   projectKey: string;
   parentKey: string | null;
   parentSummary: string | null;
+  parentStatus: string | null;
+  parentStatusCategory: string | null;
+  parentType: string | null;
   reporter: string | null;
+  assignee: string | null;
   created: string | null;
   updated: string | null;
   url: string;
@@ -31,6 +35,8 @@ export interface ReportTarget {
 export interface TodayTaskLine {
   key: string;
   percent: number;
+  /** Link text in the report. Absent for a manually typed row. */
+  summary?: string;
 }
 
 export interface ReportPayload {
@@ -38,11 +44,38 @@ export interface ReportPayload {
   todayTasks: TodayTaskLine[];
   nextTasks: string[];
   issue: string;
+  mentions: Mention[];
+}
+
+/** A person who can be picked in the mention box, or assigned a QA sub-task. */
+export interface JiraUser {
+  accountId: string;
+  displayName: string;
+}
+
+/** Outcome of one issue in a bulk transition. */
+export interface BulkResult {
+  key: string;
+  ok: boolean;
+  error?: string;
+}
+
+/**
+ * Outcome of the Slack ping sent after the report.
+ *
+ * `skipped` means the backend has no Slack credentials — the normal state when
+ * Slack is not set up, and nothing the UI should complain about.
+ */
+export interface SlackPing {
+  sent: boolean;
+  skipped: boolean;
+  error?: string;
 }
 
 export interface PostedReport {
   commentId: string;
   url: string;
+  slack: SlackPing;
 }
 
 export interface TransitionOption {

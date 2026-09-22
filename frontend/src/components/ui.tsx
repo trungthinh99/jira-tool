@@ -19,10 +19,12 @@ export function Button({
         'inline-flex items-center justify-center gap-1.5 rounded font-medium transition',
         'disabled:cursor-not-allowed disabled:opacity-50',
         size === 'sm' ? 'h-7 px-2.5 text-xs' : 'h-9 px-3.5 text-sm',
-        variant === 'primary' && 'bg-brand text-white hover:bg-brand-hover',
-        variant === 'secondary' && 'border border-line bg-white text-ink hover:bg-canvas',
-        variant === 'ghost' && 'text-muted hover:bg-canvas hover:text-ink',
-        variant === 'danger' && 'bg-danger text-white hover:opacity-90',
+        // On dark, the accent colors are light — so filled buttons take dark
+        // text, not white.
+        variant === 'primary' && 'bg-brand text-brand-contrast hover:bg-brand-hover',
+        variant === 'secondary' && 'border border-line bg-raised text-ink hover:bg-brand-soft',
+        variant === 'ghost' && 'text-muted hover:bg-raised hover:text-ink',
+        variant === 'danger' && 'bg-danger text-brand-contrast hover:opacity-90',
         className,
       )}
     />
@@ -58,11 +60,11 @@ export function CardHeader({
 }
 
 const TONE_CLASS = {
-  neutral: 'bg-canvas text-muted border-line',
-  brand: 'bg-brand-soft text-brand border-brand/20',
-  success: 'bg-success/10 text-success border-success/20',
-  warning: 'bg-warning/10 text-warning border-warning/20',
-  danger: 'bg-danger/10 text-danger border-danger/20',
+  neutral: 'bg-raised text-muted border-line',
+  brand: 'bg-brand-soft text-brand border-brand/30',
+  success: 'bg-success/15 text-success border-success/30',
+  warning: 'bg-warning/15 text-warning border-warning/30',
+  danger: 'bg-danger/15 text-danger border-danger/30',
 } as const;
 
 export function Badge({
@@ -97,7 +99,7 @@ export function EmptyState({ message }: { message: string }) {
 
 export function ErrorBanner({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
-    <div className="flex items-start justify-between gap-3 rounded border border-danger/30 bg-danger/5 px-3 py-2">
+    <div className="flex items-start justify-between gap-3 rounded border border-danger/30 bg-danger/10 px-3 py-2">
       <p className="text-sm text-danger">{message}</p>
       {onRetry ? (
         <Button size="sm" variant="ghost" onClick={onRetry}>

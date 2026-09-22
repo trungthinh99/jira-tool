@@ -72,7 +72,7 @@ export function ReportPage({ targets }: { targets: ReportTarget[] }) {
                 type="date"
                 value={isoDate}
                 onChange={(event) => setIsoDate(event.target.value)}
-                className="h-7 rounded border border-line px-2 text-xs"
+                className="h-7 rounded border border-line bg-raised px-2 text-xs [color-scheme:dark]"
               />
               <Button size="sm" variant="ghost" onClick={() => shiftDay(1)} title="Ngày sau">
                 ›
@@ -98,7 +98,7 @@ export function ReportPage({ targets }: { targets: ReportTarget[] }) {
                   'flex items-center gap-2 rounded px-3 py-1.5 text-sm font-medium transition',
                   target.id === active.id
                     ? 'bg-brand-soft text-brand'
-                    : 'text-muted hover:bg-canvas hover:text-ink',
+                    : 'text-muted hover:bg-raised hover:text-ink',
                 )}
               >
                 {target.label}
@@ -115,7 +115,7 @@ export function ReportPage({ targets }: { targets: ReportTarget[] }) {
       {error ? <ErrorBanner message={error} onRetry={() => void load(isoDate)} /> : null}
 
       {uncovered.length > 0 ? (
-        <div className="rounded border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-warning">
+        <div className="rounded border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
           {uncovered.length} task thuộc dự án chưa cấu hình báo cáo (
           {[...new Set(uncovered.map((issue) => issue.projectKey))].join(', ')}) — không nằm
           trong tab nào.

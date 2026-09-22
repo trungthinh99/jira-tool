@@ -55,6 +55,110 @@ export const SOURCE_LABEL: Record<TaskSource, string> = {
 };
 
 /**
+ * Which side of the handover a sub-task belongs to, read from its title.
+ *
+ * Titles are prefixed by whoever created them: `BE_260921:`, `FE_260921 (ALL):`,
+ * `QA_260921:`. Older work used square brackets (`[BE_260820]`, `[QA]`), and
+ * both shapes are still on live stories — so this matches an optional bracket
+ * and does not assume a date is present. Assignee is not usable here: step 4 of
+ * the flow has the FE moving Jame's BE sub-tasks. See CLAUDE.md §1b.
+ */
+export type TaskRole = 'be' | 'fe' | 'qa' | 'other';
+
+// The separator is matched explicitly rather than with `\b`: `_` counts as a
+// word character, so `BE_260921` has no word boundary after `BE` and `\b` would
+// never fire on the current title format.
+const ROLE_PATTERN = /^\s*\[?\s*(BE|FE|QA)\s*(?:[_:\]]|$)/i;
+
+export function taskRole(issue: IssueSummary): TaskRole {
+  const match = ROLE_PATTERN.exec(issue.summary);
+  if (!match?.[1]) return 'other';
+  return match[1].toLowerCase() as TaskRole;
+}
+
+export const ROLE_LABEL: Record<TaskRole, string> = {
+  be: 'BE',
+  fe: 'FE',
+  qa: 'QA',
+  other: '—',
+};
+
+/** `YYMMDD` for today — the date stamp used in `QA_YYMMDD:` titles. */
+export function todayStamp(date = new Date()): string {
+  const year = String(date.getFullYear()).slice(-2);
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}${month}${day}`;
+}
+
+/** A story with the sub-tasks assigned to me underneath it. */
+export interface StoryGroup {
+  parentKey: string;
+  parentSummary: string | null;
+  parentStatus: string | null;
+  parentStatusCategory: string | null;
+  parentType: string | null;
+  items: IssueSummary[];
+}
+
+/**
+ * Group the inbox for one project: sub-tasks collected under their story,
+ * everything else left flat under its own source.
+ *
+ * Sub-tasks arrive as a flat list, but they are handed over a story at a time —
+ * five rows repeating the same parent is how the work actually looks, not how
+ * it reads. Improvements and bugs stand alone, so they stay ungrouped.
+ */
+export interface ProjectInbox {
+  stories: StoryGroup[];
+  /** Standalone issues keyed by source, in `GROUP_ORDER`. */
+  loose: { source: TaskSource; items: IssueSummary[] }[];
+  total: number;
+}
+
+const LOOSE_ORDER: TaskSource[] = ['ba', 'tester', 'other'];
+
+export function groupProjectInbox(issues: IssueSummary[]): ProjectInbox {
+  const stories = new Map<string, StoryGroup>();
+  const loose = new Map<TaskSource, IssueSummary[]>();
+
+  for (const issue of issues) {
+    const source = taskSource(issue);
+
+    // Only backend sub-tasks nest; an improvement's parent is its epic, which
+    // is not the grouping the report cares about.
+    if (source === 'backend' && issue.parentKey) {
+      const existing = stories.get(issue.parentKey);
+      if (existing) existing.items.push(issue);
+      else
+        stories.set(issue.parentKey, {
+          parentKey: issue.parentKey,
+          parentSummary: issue.parentSummary,
+          parentStatus: issue.parentStatus,
+          parentStatusCategory: issue.parentStatusCategory,
+          parentType: issue.parentType,
+          items: [issue],
+        });
+      continue;
+    }
+
+    const bucket = loose.get(source);
+    if (bucket) bucket.push(issue);
+    else loose.set(source, [issue]);
+  }
+
+  return {
+    // Busiest story first — that is where the day's work is.
+    stories: [...stories.values()].sort((a, b) => b.items.length - a.items.length),
+    loose: LOOSE_ORDER.filter((source) => loose.has(source)).map((source) => ({
+      source,
+      items: loose.get(source) ?? [],
+    })),
+    total: issues.length,
+  };
+}
+
+/**
  * Default progress for a task on the report, read from its status.
  *
  * Anything finished or handed to review is done from the FE side; a task still
@@ -67,6 +171,45 @@ export function defaultPercent(issue: IssueSummary): number {
   if (status === 'review') return 100;
   if (issue.statusCategory === 'indeterminate') return 70;
   return 50;
+}
+
+/**
+ * Read the active menu from the URL path.
+ *
+ * Three screens do not justify a router dependency, so the path is read and
+ * written directly. An unknown path falls back to the first menu.
+ */
+export function routeFromPath(path: string, allowed: readonly string[]): string {
+  const slug = path.replace(/^\/+|\/+$/g, '');
+  return allowed.includes(slug) ? slug : (allowed[0] ?? '');
+}
+
+/**
+ * Copy text to the clipboard.
+ *
+ * `navigator.clipboard` needs a secure context; plain http://localhost counts
+ * as one in Chrome and Firefox, but the textarea path is kept for anything
+ * that does not — failing silently here would look like the button is dead.
+ */
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const area = document.createElement('textarea');
+      area.value = text;
+      area.style.position = 'fixed';
+      area.style.opacity = '0';
+      document.body.appendChild(area);
+      area.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(area);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
 }
 
 const SEEN_KEY = 'jira_tool_seen_issues';

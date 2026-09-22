@@ -4,20 +4,27 @@ export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
     extend: {
+      // Atlassian dark tokens. `surface` sits above `canvas` so cards lift off
+      // the background without a shadow, and `ink` is deliberately off-white —
+      // pure white on a dark canvas glares over a long report session.
       colors: {
-        ink: '#172B4D',
-        muted: '#626F86',
-        line: '#DFE1E6',
-        surface: '#FFFFFF',
-        canvas: '#F7F8F9',
+        ink: '#B6C2CF',
+        muted: '#8C9BAB',
+        line: '#2C333A',
+        surface: '#1D2125',
+        canvas: '#161A1D',
+        /** Raised inputs and hovers, one step lighter than `surface`. */
+        raised: '#22272B',
         brand: {
-          DEFAULT: '#0C66E4',
-          hover: '#0055CC',
-          soft: '#E9F2FF',
+          DEFAULT: '#579DFF',
+          hover: '#85B8FF',
+          soft: '#1C2B41',
+          /** Readable text/icon color on a filled `brand` button. */
+          contrast: '#1D2125',
         },
-        success: '#22A06B',
-        warning: '#E56910',
-        danger: '#C9372C',
+        success: '#7EE2B8',
+        warning: '#F5CD47',
+        danger: '#FF9C8F',
       },
       fontFamily: {
         sans: ['Inter', 'Segoe UI', 'system-ui', 'sans-serif'],

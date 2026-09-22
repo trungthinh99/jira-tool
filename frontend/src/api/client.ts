@@ -1,8 +1,11 @@
 import type {
+  BulkResult,
   IssueSummary,
+  JiraUser,
   PostedReport,
   ReportPayload,
   ReportTarget,
+  SlackPing,
   TransitionOption,
 } from './types';
 
@@ -29,6 +32,8 @@ export const api = {
 
   inbox: () => request<{ issues: IssueSummary[] }>('/inbox'),
 
+  me: () => request<{ user: JiraUser }>('/me'),
+
   activity: (date: string) =>
     request<{ date: string; issues: IssueSummary[] }>(
       `/activity?date=${encodeURIComponent(date)}`,
@@ -36,6 +41,8 @@ export const api = {
 
   previousNextTasks: (targetId: string) =>
     request<{ nextTasks: string[] }>(`/targets/${targetId}/previous-next-tasks`),
+
+  users: (targetId: string) => request<{ users: JiraUser[] }>(`/targets/${targetId}/users`),
 
   preview: (targetId: string, payload: ReportPayload) =>
     request<{ text: string; adf: unknown }>(`/targets/${targetId}/preview`, {
@@ -49,6 +56,9 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  /** Retry just the Slack ping, without re-posting the Jira comment. */
+  pingSlack: () => request<{ slack: SlackPing }>('/slack/ping', { method: 'POST' }),
+
   transitions: (issueKey: string) =>
     request<{ transitions: TransitionOption[] }>(
       `/issues/${encodeURIComponent(issueKey)}/transitions`,
@@ -59,4 +69,22 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ toStatus }),
     }),
+
+  handover: (targetId: string) =>
+    request<{ issues: IssueSummary[] }>(`/targets/${targetId}/handover`),
+
+  transitionMany: (keys: string[], toStatus: string) =>
+    request<{ results: BulkResult[] }>('/issues/transition-many', {
+      method: 'POST',
+      body: JSON.stringify({ keys, toStatus }),
+    }),
+
+  createSubtask: (parentKey: string, summary: string, assigneeAccountId?: string) =>
+    request<{ issue: IssueSummary }>(
+      `/issues/${encodeURIComponent(parentKey)}/subtasks`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ summary, assigneeAccountId }),
+      },
+    ),
 };

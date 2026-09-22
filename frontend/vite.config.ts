@@ -13,4 +13,7 @@ export default defineConfig({
       },
     },
   },
+  // Menu state lives in the path (/inbox, /actions, /report). Reloading one of
+  // those must serve index.html rather than 404 on a file that does not exist.
+  appType: 'spa',
 });

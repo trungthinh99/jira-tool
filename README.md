@@ -59,8 +59,8 @@ Khớp đúng định dạng đang dùng trên PPP-308 / PPP-354:
 ```
 *Report 18/09/2026
 Today task:
- • https://jakenm.atlassian.net/browse/HWE-425: 100%
- • https://jakenm.atlassian.net/browse/HWE-426: 100%
+ • Thay đổi thứ tự hiện thị row trong drawer kho 창고: 100%
+ • Chia lại tỉ lệ hiển thị 2:3 trong drawer chi nhánh 지사: 100%
 Next task:
  • Ghép API theo điều chỉnh từ BA và BE
  • Fix bug (nếu có)
@@ -70,6 +70,9 @@ Issue: none
 
 Dấu `*` ở đầu `*Report` không có dấu đóng — đó là mẫu nhà, giữ nguyên cho đồng
 bộ với lịch sử báo cáo.
+
+Mỗi dòng task là **tiêu đề issue có gắn link** tới chính issue đó. Dòng thêm thủ
+công không có tiêu đề nên hiển thị bằng key.
 
 Comment được gửi dưới dạng **ADF** chứ không phải markdown hay HTML: mention
 phải là node thật mang `accountId` thì Jira mới hiện đúng tên và gửi thông báo.

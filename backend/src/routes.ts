@@ -1,13 +1,19 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
-import { config, findTarget, REPORT_TARGETS } from './config.js';
+import { config, findTarget, REPORT_TARGETS, type Mention } from './config.js';
 import {
   buildReport,
+  createSubtask,
+  fetchCurrentUser,
   fetchDayActivity,
+  fetchHandoverBoard,
   fetchInbox,
+  fetchMentionableUsers,
   fetchPreviousNextTasks,
   fetchTransitions,
+  pingSlack,
   postReport,
   transitionIssue,
+  transitionMany,
 } from './jira/service.js';
 import type { ReportInput, TodayTaskLine } from './jira/adf.js';
 
@@ -51,6 +57,14 @@ routes.get(
   }),
 );
 
+/** Who the token belongs to, so the UI can mark one assignee as "tôi". */
+routes.get(
+  '/me',
+  handle(async (_req, res) => {
+    res.json({ user: await fetchCurrentUser() });
+  }),
+);
+
 routes.get(
   '/activity',
   handle(async (req, res) => {
@@ -72,6 +86,70 @@ routes.get(
       return;
     }
     res.json({ nextTasks: await fetchPreviousNextTasks(target) });
+  }),
+);
+
+/** Candidates for the mention picker, scoped to this target's report issue. */
+routes.get(
+  '/targets/:id/users',
+  handle(async (req, res) => {
+    const target = findTarget(String(req.params['id']));
+    if (!target) {
+      res.status(404).json({ error: 'Unknown report target.' });
+      return;
+    }
+    res.json({ users: await fetchMentionableUsers(target.reportIssueKey) });
+  }),
+);
+
+/** Menu 3 — every unfinished sub-task under the stories I am working on. */
+routes.get(
+  '/targets/:id/handover',
+  handle(async (req, res) => {
+    const target = findTarget(String(req.params['id']));
+    if (!target) {
+      res.status(404).json({ error: 'Unknown report target.' });
+      return;
+    }
+    res.json({ issues: await fetchHandoverBoard(target.projectKey) });
+  }),
+);
+
+/** Bulk status change. Reports per-issue results so a partial run is visible. */
+routes.post(
+  '/issues/transition-many',
+  handle(async (req, res) => {
+    const body = req.body as { keys?: unknown; toStatus?: unknown };
+    const toStatus = String(body?.toStatus ?? '').trim();
+    if (!toStatus) {
+      res.status(400).json({ error: 'Body field "toStatus" is required.' });
+      return;
+    }
+    if (!Array.isArray(body?.keys) || body.keys.length === 0) {
+      res.status(400).json({ error: 'Body field "keys" must be a non-empty array.' });
+      return;
+    }
+    const keys = body.keys.map((key) => String(key).trim()).filter(Boolean);
+    res.json({ results: await transitionMany(keys, toStatus) });
+  }),
+);
+
+routes.post(
+  '/issues/:key/subtasks',
+  handle(async (req, res) => {
+    const body = req.body as { summary?: unknown; assigneeAccountId?: unknown };
+    const summary = String(body?.summary ?? '').trim();
+    if (!summary) {
+      res.status(400).json({ error: 'Body field "summary" is required.' });
+      return;
+    }
+    const assigneeAccountId = String(body?.assigneeAccountId ?? '').trim();
+    const issue = await createSubtask({
+      parentKey: String(req.params['key']),
+      summary,
+      ...(assigneeAccountId ? { assigneeAccountId } : {}),
+    });
+    res.json({ issue });
   }),
 );
 
@@ -100,6 +178,7 @@ interface ReportBody {
   todayTasks?: unknown;
   nextTasks?: unknown;
   issue?: unknown;
+  mentions?: unknown;
 }
 
 /**
@@ -125,11 +204,12 @@ function readReportBody(
   for (const entry of body.todayTasks) {
     const key = String((entry as { key?: unknown })?.key ?? '').trim();
     const percent = Number((entry as { percent?: unknown })?.percent);
+    const summary = String((entry as { summary?: unknown })?.summary ?? '').trim();
     if (!key) return { ok: false, error: 'Every task needs a "key".' };
     if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
       return { ok: false, error: `Percent for ${key} must be between 0 and 100.` };
     }
-    todayTasks.push({ key, percent: Math.round(percent) });
+    todayTasks.push({ key, percent: Math.round(percent), ...(summary ? { summary } : {}) });
   }
 
   const nextTasks = Array.isArray(body.nextTasks)
@@ -141,6 +221,24 @@ function readReportBody(
 
   const issue = String(body.issue ?? '').trim() || 'none';
 
+  // Mentions are chosen in the UI, seeded from the target. An absent field
+  // falls back to the configured list so an older client still reports
+  // correctly; an explicit empty array means the user cleared it on purpose.
+  let mentions: Mention[] = target.mentions;
+  if (Array.isArray(body.mentions)) {
+    mentions = [];
+    for (const entry of body.mentions) {
+      const accountId = String((entry as { accountId?: unknown })?.accountId ?? '').trim();
+      const name = String((entry as { name?: unknown })?.name ?? '').trim();
+      if (!accountId || !name) {
+        return { ok: false, error: 'Mỗi mention cần "accountId" và "name".' };
+      }
+      if (!mentions.some((m) => m.accountId === accountId)) {
+        mentions.push({ accountId, name });
+      }
+    }
+  }
+
   return {
     ok: true,
     input: {
@@ -148,7 +246,7 @@ function readReportBody(
       todayTasks,
       nextTasks,
       issue,
-      mentions: target.mentions,
+      mentions,
       site: config.jira.site,
     },
   };
@@ -177,5 +275,19 @@ routes.post(
     }
     const target = findTarget(id)!;
     res.json(await postReport(target, parsed.input));
+  }),
+);
+
+/**
+ * Re-send the Slack ping on its own.
+ *
+ * The report route never fails over Slack, so a failed ping leaves a posted
+ * Jira comment behind. This lets the UI retry just the ping instead of
+ * re-posting the report and duplicating the comment.
+ */
+routes.post(
+  '/slack/ping',
+  handle(async (_req, res) => {
+    res.json({ slack: await pingSlack() });
   }),
 );

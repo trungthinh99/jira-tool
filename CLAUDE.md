@@ -37,6 +37,53 @@ sney tạo, sub-task `FE_YYMMDD:` do Jame tạo.
 báo cáo của từng dự án, mention BA/QA để họ nắm tiến độ. Trước đây gõ tay, giờ
 tool thống kê sẵn rồi Bimo chỉ soát lại.
 
+**Việc 3 — chuyển trạng thái theo quy trình bàn giao.** Xem mục 1b.
+
+## 1b. Quy trình làm task của FE — vòng đời một Story
+
+Đây là nghiệp vụ đứng sau menu **Thao tác**. Hiểu nó thì mới hiểu vì sao màn đó
+gom task theo Story và cho chuyển trạng thái hàng loạt.
+
+Một vòng đời đầy đủ:
+
+1. **BA (sney)** mô tả yêu cầu vào phần *description* của Story, phần cập nhật
+   mới bôi **màu đỏ**.
+2. **BE (Jame)** đọc description rồi tạo sub-task cho cả hai phía, đặt tiêu đề
+   theo ngày cập nhật của Story:
+   - `BE_YYMMDD: ...` — phần việc của BE
+   - `FE_YYMMDD: ...` — phần việc của Bimo
+   `YYMMDD` là **ngày Story được cập nhật**, không phải ngày tạo sub-task.
+3. **BE** chuyển task của mình `In Progress` → làm xong → `Review`.
+4. **FE (Bimo)** thấy task BE sang `Review` thì vào kiểm tra đã có docs/API chạy
+   được chưa. Nếu được:
+   - chuyển **task của BE** sang `Done` (FE là người xác nhận, không phải BE),
+   - chuyển **task của mình** sang `In Progress` rồi bắt đầu làm.
+5. **FE** làm xong → chuyển task mình sang `Review` → **tạo sub-task cho QA**
+   tiêu đề `QA_YYMMDD: Test giao diện và chức năng ...`, trạng thái `To Do`,
+   assign cho BA.
+6. **BA** test. Pass thì tự chuyển `Done` cho **cả task QA lẫn task FE**.
+
+Hệ quả cho code — ba điều dễ làm sai:
+
+- **FE chuyển trạng thái task của người khác.** Bước 4 nghĩa là Bimo đổi status
+  task do Jame làm. Nên màn Thao tác **không lọc theo `assignee`** như menu
+  Thông báo; nó lấy mọi sub-task của Story. Đây là chủ ý, không phải bug.
+- **Nhận diện task theo prefix tiêu đề, không theo assignee.** Dữ liệu thật:
+  HWE-486 có 5 sub-task `FE_260921 (ALL):` và 3 sub-task `BE_260921:`. Phần sau
+  prefix khác nhau (`(ALL):`, `:`) nên phải khớp bằng regex, xem `taskRole()`
+  trong `frontend/src/utils.ts`.
+- **Task QA có hai mẫu tiêu đề.** Mẫu cũ `[QA] Test giao diện và chức năng màn
+  hình` (HWE-191…HWE-280), mẫu mới `QA_YYMMDD: ...` (từ HWE-485). Khi **tạo**
+  thì dùng mẫu mới; khi **nhận diện** phải bắt cả hai, nếu không task QA cũ sẽ
+  bị đếm nhầm thành chưa tạo.
+
+Improvement (vd HWE-482) đi tắt: không có sub-task FE/BE, Bimo làm thẳng rồi tạo
+QA sub-task ngay dưới nó. Vì vậy màn Thao tác cho tạo QA trực tiếp trên
+Improvement/Bug.
+
+QA sub-task mẫu — HWE-485 dưới HWE-482: `issuetype: Sub-task`, `parent` là chính
+Improvement đó, `assignee: sney`, `reporter: MOBI`, trạng thái tạo ra là `To Do`.
+
 ## 2. Hai dự án, hai đích báo cáo — không được trộn
 
 Đây là ràng buộc nghiệp vụ quan trọng nhất. Một ngày làm việc thường đụng cả hai
@@ -89,7 +136,7 @@ truyền `view: 'evidence'`; giá trị nằm ở `fields.customFields`, không 
 ```
 *Report 18/09/2026
 Today task:
- • https://jakenm.atlassian.net/browse/HWE-425: 100%
+ • Thay đổi thứ tự hiện thị row trong drawer kho 창고: 100%
 Next task:
  • Ghép API theo điều chỉnh từ BA và BE
 Issue: none
@@ -101,12 +148,65 @@ trông như lỗi nhưng **là chủ ý**:
 
 - **`*Report` có dấu sao mở mà không có sao đóng.** Đó là mẫu nhà. Sửa cho cân
   đối sẽ làm báo cáo của Bimo khác với toàn bộ lịch sử phía trên.
-- **Link là URL đầy đủ hiện nguyên văn**, không phải text `HWE-425` gắn link.
 - **Nhãn `Today task:` / `Next task:` / `Issue:` in đậm**, nội dung thì không.
 - Ngày định dạng `DD/MM/YYYY`.
 
+**Dòng task là tiêu đề có gắn link, không phải URL trần.** Lịch sử cũ hiện URL
+đầy đủ; Bimo đổi ngày 21/09/2026 vì một danh sách tiêu đề dễ đọc hơn một danh
+sách URL. ADF vẫn giữ `href` trỏ tới issue, chỉ đổi phần text hiển thị. Dòng
+"Thêm thủ công" không có tiêu đề nên rơi về hiển thị key.
+
+Bản preview text **không** dựng được link, nên nó in tiêu đề rồi thêm dòng
+`↳ <url>` bên dưới — để Bimo soát được link sẽ gửi đi, chứ không phải duyệt một
+thứ mình không nhìn thấy.
+
 Nếu Bimo bảo đổi mẫu, sửa `backend/src/jira/adf.ts` — cả `buildReportAdf()` và
 `renderReportText()`, vì hai hàm phải luôn mô tả cùng một báo cáo.
+
+### Báo Slack sau khi đăng
+
+Đăng báo cáo xong thì bắn một tin nhắn vào Slack (`em báo cáo rồi nha chị`) để
+chị khỏi phải tự vào Jira xem. Cấu hình ở `backend/.env`:
+
+| Biến | Ý nghĩa |
+| --- | --- |
+| `SLACK_USER_TOKEN` | User OAuth Token (`xoxp-...`), scope `chat:write` — **cái nên dùng** |
+| `SLACK_BOT_TOKEN` | Bot token (`xoxb-...`), chỉ là phương án dự phòng |
+| `SLACK_REPORT_CHANNEL` | Channel ID dạng `C...` — hiện là `#dev-team` (`C09MJAZT1CL`) |
+| `SLACK_REPORT_MESSAGE` | Nội dung tin nhắn, đổi được mà không phải sửa code |
+
+**Gửi bằng user token, không phải bot.** Bimo muốn tin nhắn là *mình* báo cáo,
+không phải một con bot nhắn hộ — bot thì Slack gắn nhãn `APP` cạnh tên và hiện
+avatar app. Vì vậy `config.slack.token` ưu tiên `SLACK_USER_TOKEN` rồi mới rơi
+về `SLACK_BOT_TOKEN`, và payload luôn kèm `as_user: true` (bot token bỏ qua
+field này nên một đường code chạy được cả hai).
+
+Đổi lại: user token mang **quyền tài khoản Slack của Bimo**, không phải quyền
+một app riêng. Giữ nó như token Jira — chỉ ở `backend/.env`, không xuống
+browser, không commit.
+
+Ba điều đã cân nhắc, đừng "sửa cho gọn":
+
+- **Thiếu token thì bỏ qua lặng lẽ**, không lỗi. Tool vốn chạy được không cần
+  Slack; bắt buộc có token sẽ làm hỏng máy chưa cấu hình.
+- **Slack lỗi KHÔNG làm hỏng việc đăng báo cáo.** Comment Jira đã post thì
+  không rút lại được — trả lỗi cho cả thao tác sẽ khiến Bimo bấm đăng lại và
+  sinh comment trùng trên PPP-354/PPP-308. Vì vậy `postReport()` trả thêm
+  `slack: { sent, skipped, error }` và UI hiện cảnh báo riêng kèm nút
+  **"Gửi lại Slack"**, gọi `POST /api/slack/ping` — gửi mỗi tin nhắn, không
+  đụng Jira.
+- **Slack trả HTTP 200 kể cả khi từ chối**, lý do nằm ở `ok: false` + `error`.
+  Chỉ xem status code là tưởng gửi thành công. `backend/src/slack/client.ts`
+  dịch sẵn bốn mã hay gặp lúc cài (`not_in_channel`, `channel_not_found`,
+  `invalid_auth`, `missing_scope`) sang tiếng Việt kèm cách xử lý.
+
+Bẫy cài đặt: `chat:write` phải nằm ở **User Token Scopes**, không phải Bot Token
+Scopes — thêm nhầm chỗ thì vẫn ra `xoxb-` chứ không ra `xoxp-`. Thêm scope xong
+**phải Reinstall app** thì token mới có hiệu lực. Và tài khoản gửi phải là thành
+viên của kênh, nếu không Slack trả `not_in_channel`.
+
+Hiện cả hai dự án dùng chung một kênh. Muốn tách kênh theo dự án thì thêm field
+vào `REPORT_TARGETS` (mục 2) chứ đừng đẻ bảng tra song song.
 
 ### Quy ước phần trăm
 
@@ -136,11 +236,22 @@ Jira.
   `contentFormat: html` **từ chối** `data-mention-id`, nên phải gọi thẳng
   `POST /rest/api/3/issue/{key}/comment`.
 
-- **`status CHANGED DURING` bỏ sót task.** JQL thống kê trong ngày chỉ bắt task
-  có đổi trạng thái. Task làm cả ngày mà chưa chuyển status sẽ **không** xuất
-  hiện. Đây là đánh đổi có chủ ý — nới JQL ra `updated >=` sẽ kéo theo cả task
-  chỉ được comment. Bù bằng ô "Thêm thủ công" trên UI. **Đừng tự nới JQL** mà
-  chưa hỏi Bimo.
+- **`status CHANGED DURING` bỏ sót task.** JQL thống kê trong ngày (menu Báo
+  cáo) chỉ bắt task có đổi trạng thái. Task làm cả ngày mà chưa chuyển status sẽ
+  **không** xuất hiện. Đây là đánh đổi có chủ ý — nới JQL ra `updated >=` sẽ kéo
+  theo cả task chỉ được comment. Bù bằng ô "Thêm thủ công" trên UI. **Đừng tự
+  nới JQL này** mà chưa hỏi Bimo.
+
+- **JQL của Inbox đã được nới ngày 21/09/2026**, khi thêm filter status và
+  người làm. Trước: `assignee = currentUser() AND status = "To Do"`. Sau:
+  `project IN (...) AND assignee = currentUser() AND statusCategory != Done`,
+  cộng thêm sub-task anh em qua `fetchChildren()`. Lọc thật nằm ở FE
+  (`matchesFilters` trong `InboxPage`), mặc định vẫn là To Do + người dùng hiện
+  tại nên màn hình mở ra giống hệt trước.
+
+  **Phải giới hạn `project IN (...)`.** Bỏ ra thì JQL kéo về chính hai issue báo
+  cáo PPP-354 / PPP-308 — chúng assign cho Bimo và nằm ở In Progress vĩnh viễn —
+  cùng các project lạ (SPB, PPP khác). Đã gặp thật khi kiểm thử.
 
 - **Transition tra theo tên trạng thái, không hardcode id.** Trên HWE hiện tại
   id là `11` To Do · `21` In Progress · `31` Done · `51` Review, nhưng id là cấu
@@ -186,13 +297,16 @@ backend/
     parseReport.ts     đọc ngược "Next task" từ báo cáo cũ
     service.ts         JQL và nghiệp vụ
     types.ts
+  src/slack/
+    client.ts          chat.postMessage + dịch mã lỗi Slack sang tiếng Việt
   src/routes.ts        REST cho frontend
   src/server.ts        middleware + error handler
 frontend/
   src/api/             client + types
-  src/pages/           InboxPage · ReportPage · ReportForm
+  src/pages/           InboxPage · ActionsPage · ReportPage · ReportForm
+                       MentionPicker · CreateQaDialog
   src/components/ui.tsx
-  src/utils.ts         taskSource, defaultPercent, format ngày
+  src/utils.ts         taskSource, taskRole, defaultPercent, format ngày
 ```
 
 ## 7. Trước khi commit
@@ -257,8 +371,14 @@ Tính tới **21/09/2026**, tool đã dựng xong và chạy với dữ liệu J
 
 **CHƯA chạy thật — cần Bimo bấm thử:**
 
-- **Nút "Đăng báo cáo"** — sẽ post comment thật lên PPP-354 / PPP-308.
+- **Nút "Đăng báo cáo"** — sẽ post comment thật lên PPP-354 / PPP-308, và
+  (nếu đã cấu hình) nhắn Slack.
+- **Gửi Slack** — chưa chạy lần nào vì chưa có `SLACK_BOT_TOKEN`. Thử riêng
+  được bằng `POST /api/slack/ping` mà không đụng gì tới Jira.
 - **Nút "Bắt đầu"** ở Inbox — sẽ đổi trạng thái task thật sang In Progress.
+- **Menu Thao tác** — nút "Chuyển N task" đổi trạng thái hàng loạt, nút "+ QA"
+  tạo sub-task thật. Phần đọc (`GET /targets/:id/handover`) đã kiểm trên dữ
+  liệu thật: 27 task chưa xong, gom đúng 5 Story, phân đúng 14 FE / 12 BE.
 
 Cả hai đều ghi lên Jira nên tôi không tự chạy. Code đã xong; nếu ADF có gì lệch
 mẫu thì sửa `adf.ts`. **Khi kiểm thử, đừng post thử lên PPP-354/PPP-308** — đó

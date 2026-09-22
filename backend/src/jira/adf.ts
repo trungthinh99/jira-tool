@@ -5,6 +5,8 @@ export interface TodayTaskLine {
   key: string;
   /** Progress as shown after the colon, e.g. `100`. */
   percent: number;
+  /** Link text. Falls back to the key for a manually typed row. */
+  summary?: string;
 }
 
 export interface ReportInput {
@@ -37,14 +39,16 @@ function bullet(content: Node[]): Node {
 }
 
 /**
- * An issue link rendered the way the existing reports render it: the URL as the
- * visible text, carrying a `link` mark. Jira turns a bare text URL into a link
- * on render but stores it unmarked, and the report history shows marked links —
- * so the mark is written explicitly rather than left to the renderer.
+ * An issue link whose visible text is the task title, not the URL.
+ *
+ * Earlier reports showed the bare URL; a line of titles is what the readers
+ * actually scan, so the href is kept but the text is the summary. A manual row
+ * has no summary, and falls back to the key.
  */
-function issueLink(site: string, key: string): Node {
-  const href = `https://${site}/browse/${key}`;
-  return { type: 'text', text: href, marks: [{ type: 'link', attrs: { href } }] };
+function issueLink(site: string, task: TodayTaskLine): Node {
+  const href = `https://${site}/browse/${task.key}`;
+  const text = task.summary?.trim() || task.key;
+  return { type: 'text', text, marks: [{ type: 'link', attrs: { href } }] };
 }
 
 /**
@@ -79,7 +83,7 @@ export function buildReportAdf(input: ReportInput): Node {
   content.push({
     type: 'bulletList',
     content: input.todayTasks.map((task) =>
-      bullet([issueLink(input.site, task.key), plain(`: ${task.percent}%`)]),
+      bullet([issueLink(input.site, task), plain(`: ${task.percent}%`)]),
     ),
   });
 
@@ -90,7 +94,9 @@ export function buildReportAdf(input: ReportInput): Node {
     content: input.nextTasks.map((line) => bullet([plain(line)])),
   });
 
-  const tail: Node[] = [strong('Issue: '), plain(input.issue), hardBreak()];
+  // With no mentions the trailing hardBreak would leave a blank last line.
+  const tail: Node[] = [strong('Issue: '), plain(input.issue)];
+  if (input.mentions.length > 0) tail.push(hardBreak());
   for (const mention of input.mentions) {
     tail.push({
       type: 'mention',
@@ -114,13 +120,19 @@ export function renderReportText(input: ReportInput): string {
   lines.push(`*Report ${input.dateLabel}`);
   lines.push('Today task:');
   for (const task of input.todayTasks) {
-    lines.push(`  • https://${input.site}/browse/${task.key}: ${task.percent}%`);
+    // The preview cannot show a link, so it shows the text and the target the
+    // ADF will carry — otherwise the user approves a link they cannot see.
+    const text = task.summary?.trim() || task.key;
+    lines.push(`  • ${text}: ${task.percent}%`);
+    lines.push(`      ↳ https://${input.site}/browse/${task.key}`);
   }
   lines.push('Next task:');
   for (const next of input.nextTasks) {
     lines.push(`  • ${next}`);
   }
   lines.push(`Issue: ${input.issue}`);
-  lines.push(input.mentions.map((m) => `@${m.name}`).join(' '));
+  if (input.mentions.length > 0) {
+    lines.push(input.mentions.map((m) => `@${m.name}`).join(' '));
+  }
   return lines.join('\n');
 }

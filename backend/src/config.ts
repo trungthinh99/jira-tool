@@ -81,12 +81,32 @@ export const config = {
     email: required('JIRA_EMAIL'),
     token: required('JIRA_API_TOKEN'),
   },
+  /**
+   * Optional. Without a token the tool behaves exactly as before: the report
+   * goes to Jira and nothing is sent to Slack. Slack is a courtesy ping, not
+   * part of the record.
+   */
+  slack: {
+    /**
+     * User token (`xoxp-...`) wins over the bot token: the message should read
+     * as Bimo reporting, not as an app. A bot token still works as a fallback,
+     * but the message then carries Slack's APP tag.
+     */
+    token: process.env.SLACK_USER_TOKEN || process.env.SLACK_BOT_TOKEN || '',
+    channel: process.env.SLACK_REPORT_CHANNEL ?? '',
+    message: process.env.SLACK_REPORT_MESSAGE ?? 'em báo cáo rồi nha chị',
+  },
   /** Dev origins allowed to call this proxy. */
   corsOrigins: (process.env.CORS_ORIGINS ?? 'http://localhost:5180')
     .split(',')
     .map((o) => o.trim())
     .filter(Boolean),
 };
+
+/** Slack only fires when both the token and a destination channel are set. */
+export function slackEnabled(): boolean {
+  return Boolean(config.slack.token && config.slack.channel);
+}
 
 export function findTarget(id: string): ReportTarget | undefined {
   return REPORT_TARGETS.find((t) => t.id === id);

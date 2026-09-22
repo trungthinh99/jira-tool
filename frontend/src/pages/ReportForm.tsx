@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
-import type { IssueSummary, PostedReport, ReportTarget } from '../api/types';
+import type { IssueSummary, JiraUser, Mention, PostedReport, ReportTarget } from '../api/types';
 import { Badge, Button, Card, CardHeader, ErrorBanner, statusTone } from '../components/ui';
 import { cn, defaultPercent, toReportDate } from '../utils';
+import { MentionPicker } from './MentionPicker';
 
 interface TaskRow {
   key: string;
@@ -27,8 +28,13 @@ export function ReportForm({ target, issues, isoDate, loadingIssues }: Props) {
   const [preview, setPreview] = useState<string | null>(null);
   const [posting, setPosting] = useState(false);
   const [posted, setPosted] = useState<PostedReport | null>(null);
+  const [pingingSlack, setPingingSlack] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [manualKey, setManualKey] = useState('');
+  const [mentions, setMentions] = useState<Mention[]>(target.mentions);
+  const [users, setUsers] = useState<JiraUser[]>([]);
+  const [usersLoading, setUsersLoading] = useState(true);
+  const [usersError, setUsersError] = useState<string | null>(null);
 
   // Rebuild the task rows whenever the day's activity changes. Manual rows are
   // deliberately dropped here: they belong to the day they were typed for.
@@ -61,19 +67,49 @@ export function ReportForm({ target, issues, isoDate, loadingIssues }: Props) {
     };
   }, [target]);
 
+  // Load the people who can be mentioned on this target's report issue.
+  useEffect(() => {
+    let cancelled = false;
+    setUsersLoading(true);
+    setUsersError(null);
+    api
+      .users(target.id)
+      .then(({ users: fetched }) => {
+        if (!cancelled) setUsers(fetched);
+      })
+      .catch((caught: unknown) => {
+        if (cancelled) return;
+        setUsersError(
+          caught instanceof Error ? caught.message : 'Không tải được danh sách người dùng.',
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setUsersLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [target]);
+
   const payload = useMemo(
     () => ({
       dateLabel: toReportDate(isoDate),
       todayTasks: rows
         .filter((row) => row.included)
-        .map((row) => ({ key: row.key, percent: row.percent })),
+        .map((row) => ({
+          key: row.key,
+          percent: row.percent,
+          // Manual rows have no issue behind them, so they link by key.
+          ...(row.issue ? { summary: row.issue.summary } : {}),
+        })),
       nextTasks: nextTasks
         .split('\n')
         .map((line) => line.trim())
         .filter(Boolean),
       issue: issueNote.trim() || 'none',
+      mentions,
     }),
-    [isoDate, rows, nextTasks, issueNote],
+    [isoDate, rows, nextTasks, issueNote, mentions],
   );
 
   const canSubmit = payload.todayTasks.length > 0 && payload.nextTasks.length > 0;
@@ -118,6 +154,31 @@ export function ReportForm({ target, issues, isoDate, loadingIssues }: Props) {
     }
   };
 
+  // Retries the ping alone. Re-posting the report would put a second copy of
+  // the same comment on the report issue.
+  const retrySlack = async () => {
+    setPingingSlack(true);
+    try {
+      const { slack } = await api.pingSlack();
+      setPosted((current) => (current ? { ...current, slack } : current));
+    } catch (caught) {
+      setPosted((current) =>
+        current
+          ? {
+              ...current,
+              slack: {
+                sent: false,
+                skipped: false,
+                error: caught instanceof Error ? caught.message : 'Không gửi được Slack.',
+              },
+            }
+          : current,
+      );
+    } finally {
+      setPingingSlack(false);
+    }
+  };
+
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
       <div className="space-y-4">
@@ -147,7 +208,7 @@ export function ReportForm({ target, issues, isoDate, loadingIssues }: Props) {
                     type="checkbox"
                     checked={row.included}
                     onChange={(event) => update(row.key, { included: event.target.checked })}
-                    className="h-4 w-4 shrink-0 accent-[#0C66E4]"
+                    className="h-4 w-4 shrink-0 accent-brand"
                   />
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
@@ -182,7 +243,7 @@ export function ReportForm({ target, issues, isoDate, loadingIssues }: Props) {
                       onChange={(event) =>
                         update(row.key, { percent: Number(event.target.value) })
                       }
-                      className="h-7 w-16 rounded border border-line px-2 text-right text-xs"
+                      className="h-7 w-16 rounded border border-line bg-raised px-2 text-right text-xs"
                     />
                     <span className="text-xs text-muted">%</span>
                     <Button
@@ -209,7 +270,7 @@ export function ReportForm({ target, issues, isoDate, loadingIssues }: Props) {
                 if (event.key === 'Enter') addManual();
               }}
               placeholder={`Thêm thủ công, vd ${target.projectKey}-123`}
-              className="h-8 flex-1 rounded border border-line px-2.5 text-xs"
+              className="h-8 flex-1 rounded border border-line bg-raised px-2.5 text-xs placeholder:text-muted"
             />
             <Button size="sm" onClick={addManual}>
               Thêm
@@ -227,21 +288,47 @@ export function ReportForm({ target, issues, isoDate, loadingIssues }: Props) {
               value={nextTasks}
               onChange={(event) => setNextTasks(event.target.value)}
               rows={4}
-              className="w-full resize-y rounded border border-line p-2.5 text-sm"
+              className="w-full resize-y rounded border border-line bg-raised p-2.5 text-sm"
             />
           </div>
         </Card>
 
-        <Card>
-          <CardHeader title="Issue" subtitle="Để 'none' nếu không có vướng mắc." />
-          <div className="p-4">
-            <input
-              value={issueNote}
-              onChange={(event) => setIssueNote(event.target.value)}
-              className="w-full rounded border border-line p-2.5 text-sm"
+        <div className="grid gap-4 md:grid-cols-2">
+          <Card>
+            <CardHeader title="Issue" subtitle="Để 'none' nếu không có vướng mắc." />
+            <div className="p-4">
+              <input
+                value={issueNote}
+                onChange={(event) => setIssueNote(event.target.value)}
+                className="w-full rounded border border-line bg-raised p-2.5 text-sm"
+              />
+            </div>
+          </Card>
+
+          <Card>
+            <CardHeader
+              title="Mention"
+              subtitle="Người được tag ở cuối báo cáo."
+              actions={
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  title="Về mặc định của dự án"
+                  onClick={() => setMentions(target.mentions)}
+                >
+                  Mặc định
+                </Button>
+              }
             />
-          </div>
-        </Card>
+            <MentionPicker
+              value={mentions}
+              onChange={setMentions}
+              users={users}
+              loading={usersLoading}
+              error={usersError}
+            />
+          </Card>
+        </div>
       </div>
 
       <div className="space-y-4">
@@ -256,11 +343,14 @@ export function ReportForm({ target, issues, isoDate, loadingIssues }: Props) {
             }
           />
           <div className="p-4">
-            <pre className="scrollbar-thin max-h-[380px] overflow-auto whitespace-pre-wrap rounded bg-canvas p-3 font-mono text-xs leading-relaxed">
+            <pre className="scrollbar-thin max-h-[380px] overflow-auto whitespace-pre-wrap rounded border border-line bg-canvas p-3 font-mono text-xs leading-relaxed">
               {preview ?? 'Bấm "Dựng lại" để xem nội dung sẽ đăng.'}
             </pre>
             <p className="mt-2 text-xs text-muted">
-              Mention: {target.mentions.map((mention) => `@${mention.name}`).join(' ')}
+              Mention:{' '}
+              {mentions.length > 0
+                ? mentions.map((mention) => `@${mention.name}`).join(' ')
+                : 'không tag ai'}
             </p>
           </div>
         </Card>
@@ -268,8 +358,10 @@ export function ReportForm({ target, issues, isoDate, loadingIssues }: Props) {
         {error ? <ErrorBanner message={error} /> : null}
 
         {posted ? (
-          <div className="rounded border border-success/30 bg-success/5 px-3 py-2.5 text-sm">
-            <p className="font-medium text-success">Đã đăng báo cáo.</p>
+          <div className="rounded border border-success/30 bg-success/10 px-3 py-2.5 text-sm">
+            <p className="font-medium text-success">
+              {posted.slack.sent ? 'Đã đăng báo cáo và nhắn Slack.' : 'Đã đăng báo cáo.'}
+            </p>
             <a
               href={posted.url}
               target="_blank"
@@ -278,6 +370,19 @@ export function ReportForm({ target, issues, isoDate, loadingIssues }: Props) {
             >
               Mở comment trên Jira →
             </a>
+            {posted.slack.error ? (
+              <div className="mt-2 border-t border-success/20 pt-2">
+                <p className="text-warning">Jira đã xong, nhưng Slack lỗi: {posted.slack.error}</p>
+                <Button
+                  variant="ghost"
+                  className="mt-1"
+                  disabled={pingingSlack}
+                  onClick={retrySlack}
+                >
+                  {pingingSlack ? 'Đang gửi…' : 'Gửi lại Slack'}
+                </Button>
+              </div>
+            ) : null}
           </div>
         ) : null}
 

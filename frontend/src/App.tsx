@@ -2,21 +2,53 @@ import { useEffect, useState } from 'react';
 import { api } from './api/client';
 import type { ReportTarget } from './api/types';
 import { Card, ErrorBanner, Spinner } from './components/ui';
+import { ActionsPage } from './pages/ActionsPage';
 import { InboxPage } from './pages/InboxPage';
 import { ReportPage } from './pages/ReportPage';
-import { cn } from './utils';
+import { cn, routeFromPath } from './utils';
 
-type MenuKey = 'inbox' | 'report';
+type MenuKey = 'inbox' | 'actions' | 'report';
 
 const MENU: { key: MenuKey; label: string; icon: string; hint: string }[] = [
   { key: 'inbox', label: 'Thông báo', icon: '📥', hint: 'Task mới được phân' },
+  { key: 'actions', label: 'Thao tác', icon: '⚡', hint: 'Chuyển trạng thái, tạo QA' },
   { key: 'report', label: 'Báo cáo', icon: '📝', hint: 'Báo cáo hàng ngày' },
 ];
 
+const MENU_KEYS = MENU.map((item) => item.key);
+
 export function App() {
-  const [menu, setMenu] = useState<MenuKey>('inbox');
+  // The path is the source of truth, so a reload lands on the same screen.
+  const [menu, setMenu] = useState<MenuKey>(
+    () => routeFromPath(window.location.pathname, MENU_KEYS) as MenuKey,
+  );
   const [targets, setTargets] = useState<ReportTarget[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Keep the back/forward buttons working.
+  useEffect(() => {
+    const onPopState = () => {
+      setMenu(routeFromPath(window.location.pathname, MENU_KEYS) as MenuKey);
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  // Normalise the entry URL once: "/" or an unknown path becomes the real one,
+  // so the address bar always names the screen on show. Later changes go
+  // through navigate(), which is why this does not depend on `menu`.
+  useEffect(() => {
+    const initial = routeFromPath(window.location.pathname, MENU_KEYS);
+    if (window.location.pathname !== `/${initial}`) {
+      window.history.replaceState(null, '', `/${initial}`);
+    }
+  }, []);
+
+  const navigate = (key: MenuKey) => {
+    if (key === menu) return;
+    window.history.pushState(null, '', `/${key}`);
+    setMenu(key);
+  };
 
   useEffect(() => {
     api
@@ -43,12 +75,12 @@ export function App() {
           {MENU.map((item) => (
             <button
               key={item.key}
-              onClick={() => setMenu(item.key)}
+              onClick={() => navigate(item.key)}
               className={cn(
                 'mb-1 flex w-full items-start gap-2.5 rounded px-3 py-2 text-left transition',
                 menu === item.key
                   ? 'bg-brand-soft text-brand'
-                  : 'text-muted hover:bg-canvas hover:text-ink',
+                  : 'text-muted hover:bg-raised hover:text-ink',
               )}
             >
               <span className="text-base leading-5">{item.icon}</span>
@@ -90,7 +122,9 @@ export function App() {
 
           {targets ? (
             menu === 'inbox' ? (
-              <InboxPage />
+              <InboxPage targets={targets} />
+            ) : menu === 'actions' ? (
+              <ActionsPage targets={targets} />
             ) : (
               <ReportPage targets={targets} />
             )
