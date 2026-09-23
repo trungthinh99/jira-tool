@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
-import type { IssueSummary, ReportTarget } from '../api/types';
+import type {
+  IssueSummary,
+  PostedReport,
+  ReportTarget,
+  SlackConfig,
+  SlackPing,
+} from '../api/types';
 import { Badge, Button, Card, CardHeader, ErrorBanner, Spinner } from '../components/ui';
 import { cn, toIsoDate } from '../utils';
 import { ReportForm } from './ReportForm';
@@ -11,6 +17,18 @@ export function ReportPage({ targets }: { targets: ReportTarget[] }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeId, setActiveId] = useState(targets[0]?.id ?? '');
+
+  /**
+   * Reports posted today, by target id.
+   *
+   * Lives here rather than in `ReportForm` because the form is remounted on
+   * every tab switch: the Slack button needs to know that HWE is already
+   * reported while TMS is on screen.
+   */
+  const [postedByTarget, setPostedByTarget] = useState<Map<string, PostedReport>>(new Map());
+  const [slack, setSlack] = useState<SlackConfig | null>(null);
+  const [slackPing, setSlackPing] = useState<SlackPing | null>(null);
+  const [pinging, setPinging] = useState(false);
 
   const load = useCallback(async (date: string) => {
     setLoading(true);
@@ -29,6 +47,44 @@ export function ReportPage({ targets }: { targets: ReportTarget[] }) {
   useEffect(() => {
     void load(isoDate);
   }, [isoDate, load]);
+
+  // A new day is a new round of reporting — nothing posted, nothing announced.
+  useEffect(() => {
+    setPostedByTarget(new Map());
+    setSlackPing(null);
+  }, [isoDate]);
+
+  // Slack is optional; without it configured the button never appears.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .slackConfig()
+      .then((config) => {
+        if (!cancelled) setSlack(config);
+      })
+      .catch(() => {
+        if (!cancelled) setSlack({ enabled: false, message: '' });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const sendSlack = async () => {
+    setPinging(true);
+    try {
+      const { slack: result } = await api.pingSlack();
+      setSlackPing(result);
+    } catch (caught) {
+      setSlackPing({
+        sent: false,
+        skipped: false,
+        error: caught instanceof Error ? caught.message : 'Không gửi được Slack.',
+      });
+    } finally {
+      setPinging(false);
+    }
+  };
 
   const byTarget = useMemo(() => {
     const map = new Map<string, IssueSummary[]>();
@@ -103,6 +159,11 @@ export function ReportPage({ targets }: { targets: ReportTarget[] }) {
               >
                 {target.label}
                 <Badge tone={target.id === active.id ? 'brand' : 'neutral'}>{count}</Badge>
+                {postedByTarget.has(target.id) ? (
+                  <span className="text-success" title="Đã đăng báo cáo">
+                    ✓
+                  </span>
+                ) : null}
               </button>
             );
           })}
@@ -133,8 +194,21 @@ export function ReportPage({ targets }: { targets: ReportTarget[] }) {
           issues={byTarget.get(active.id) ?? []}
           isoDate={isoDate}
           loadingIssues={loading}
+          posted={postedByTarget.get(active.id) ?? null}
+          onPosted={(result) =>
+            setPostedByTarget((current) => new Map(current).set(active.id, result))
+          }
+          slack={
+            // One message for the whole day, not one per project — so the
+            // button lives under "Đăng báo cáo" but its state belongs to the
+            // page, which survives the tab switch that remounts this form.
+            slack?.enabled
+              ? { message: slack.message, ping: slackPing, pinging, onSend: sendSlack }
+              : null
+          }
         />
       )}
+
     </div>
   );
 }

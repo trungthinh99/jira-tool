@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
-import type { IssueSummary, JiraUser, Mention, PostedReport, ReportTarget } from '../api/types';
+import type {
+  IssueSummary,
+  JiraUser,
+  Mention,
+  PostedReport,
+  ReportTarget,
+  SlackPing,
+} from '../api/types';
 import { Badge, Button, Card, CardHeader, ErrorBanner, statusTone } from '../components/ui';
 import { cn, defaultPercent, toReportDate } from '../utils';
 import { MentionPicker } from './MentionPicker';
@@ -19,16 +26,44 @@ interface Props {
   issues: IssueSummary[];
   isoDate: string;
   loadingIssues: boolean;
+  /**
+   * Where this form was posted, if it was. Held by the parent because the form
+   * is remounted on every tab switch — the Slack button has to survive that to
+   * know which projects are already reported.
+   */
+  posted: PostedReport | null;
+  onPosted: (result: PostedReport) => void;
+  /** Null when Slack is not configured; the button is then not rendered. */
+  slack: SlackButton | null;
 }
 
-export function ReportForm({ target, issues, isoDate, loadingIssues }: Props) {
+/**
+ * Everything the Slack button needs, owned by the page.
+ *
+ * The message announces the day's reporting, not one issue, so its state has
+ * to outlive the tab switch that remounts this form — see CLAUDE.md §3.
+ */
+export interface SlackButton {
+  message: string;
+  ping: SlackPing | null;
+  pinging: boolean;
+  onSend: () => void | Promise<void>;
+}
+
+export function ReportForm({
+  target,
+  issues,
+  isoDate,
+  loadingIssues,
+  posted,
+  onPosted,
+  slack,
+}: Props) {
   const [rows, setRows] = useState<TaskRow[]>([]);
   const [nextTasks, setNextTasks] = useState('');
   const [issueNote, setIssueNote] = useState('none');
   const [preview, setPreview] = useState<string | null>(null);
   const [posting, setPosting] = useState(false);
-  const [posted, setPosted] = useState<PostedReport | null>(null);
-  const [pingingSlack, setPingingSlack] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [manualKey, setManualKey] = useState('');
   const [mentions, setMentions] = useState<Mention[]>(target.mentions);
@@ -47,7 +82,6 @@ export function ReportForm({ target, issues, isoDate, loadingIssues }: Props) {
         issue,
       })),
     );
-    setPosted(null);
     setPreview(null);
   }, [issues]);
 
@@ -146,36 +180,11 @@ export function ReportForm({ target, issues, isoDate, loadingIssues }: Props) {
     setPosting(true);
     setError(null);
     try {
-      setPosted(await api.postReport(target.id, payload));
+      onPosted(await api.postReport(target.id, payload));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Không đăng được báo cáo.');
     } finally {
       setPosting(false);
-    }
-  };
-
-  // Retries the ping alone. Re-posting the report would put a second copy of
-  // the same comment on the report issue.
-  const retrySlack = async () => {
-    setPingingSlack(true);
-    try {
-      const { slack } = await api.pingSlack();
-      setPosted((current) => (current ? { ...current, slack } : current));
-    } catch (caught) {
-      setPosted((current) =>
-        current
-          ? {
-              ...current,
-              slack: {
-                sent: false,
-                skipped: false,
-                error: caught instanceof Error ? caught.message : 'Không gửi được Slack.',
-              },
-            }
-          : current,
-      );
-    } finally {
-      setPingingSlack(false);
     }
   };
 
@@ -359,9 +368,7 @@ export function ReportForm({ target, issues, isoDate, loadingIssues }: Props) {
 
         {posted ? (
           <div className="rounded border border-success/30 bg-success/10 px-3 py-2.5 text-sm">
-            <p className="font-medium text-success">
-              {posted.slack.sent ? 'Đã đăng báo cáo và nhắn Slack.' : 'Đã đăng báo cáo.'}
-            </p>
+            <p className="font-medium text-success">Đã đăng báo cáo.</p>
             <a
               href={posted.url}
               target="_blank"
@@ -370,19 +377,6 @@ export function ReportForm({ target, issues, isoDate, loadingIssues }: Props) {
             >
               Mở comment trên Jira →
             </a>
-            {posted.slack.error ? (
-              <div className="mt-2 border-t border-success/20 pt-2">
-                <p className="text-warning">Jira đã xong, nhưng Slack lỗi: {posted.slack.error}</p>
-                <Button
-                  variant="ghost"
-                  className="mt-1"
-                  disabled={pingingSlack}
-                  onClick={retrySlack}
-                >
-                  {pingingSlack ? 'Đang gửi…' : 'Gửi lại Slack'}
-                </Button>
-              </div>
-            ) : null}
           </div>
         ) : null}
 
@@ -392,13 +386,41 @@ export function ReportForm({ target, issues, isoDate, loadingIssues }: Props) {
           disabled={!canSubmit || posting}
           onClick={() => void submit()}
         >
-          {posting ? 'Đang đăng…' : `Đăng báo cáo vào ${target.reportIssueKey}`}
+          {posting
+            ? 'Đang đăng…'
+            : posted
+              ? `Đăng lại vào ${target.reportIssueKey}`
+              : `Đăng báo cáo vào ${target.reportIssueKey}`}
         </Button>
 
         {!canSubmit ? (
           <p className="text-center text-xs text-muted">
             Cần ít nhất 1 task và 1 dòng Next task.
           </p>
+        ) : null}
+
+        {slack ? (
+          <>
+            <Button
+              className="w-full"
+              variant="danger"
+              disabled={slack.pinging}
+              onClick={() => void slack.onSend()}
+              title={slack.message}
+            >
+              {slack.pinging ? 'Đang gửi…' : 'Nhắn tin Slack'}
+            </Button>
+
+            {/* Only spoken up about once it has happened — the button says
+                nothing about whether the message went out, and a second click
+                would ping the channel twice. */}
+            {slack.ping?.sent ? (
+              <p className="text-center text-xs text-success">✓ Đã nhắn Slack.</p>
+            ) : null}
+            {slack.ping?.error ? (
+              <p className="text-center text-xs text-danger">{slack.ping.error}</p>
+            ) : null}
+          </>
         ) : null}
       </div>
     </div>

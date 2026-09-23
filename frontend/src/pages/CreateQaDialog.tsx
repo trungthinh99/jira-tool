@@ -4,10 +4,19 @@ import type { IssueSummary, JiraUser, Mention } from '../api/types';
 import { Button, ErrorBanner } from '../components/ui';
 import { todayStamp } from '../utils';
 
+/** `YYMMDD` -> `DD/MM/YYYY`, so the seeded stamp can be sanity-checked by eye. */
+function readStamp(stamp: string): string {
+  const match = /^(\d{2})(\d{2})(\d{2})$/.exec(stamp);
+  if (!match) return stamp;
+  return `${match[3]}/${match[2]}/20${match[1]}`;
+}
+
 /** Only what the dialog shows — a story header has no IssueSummary of its own. */
 export interface QaParent {
   key: string;
   summary: string;
+  /** `YYMMDD` of the handover round this QA belongs to. See `qaStamp()`. */
+  stamp: string;
 }
 
 interface Props {
@@ -28,9 +37,10 @@ export function CreateQaDialog({
   onCreated,
 }: Props) {
   // `QA_YYMMDD: Test giao diện và chức năng ` — the trailing space is where the
-  // user keeps typing, so the caret lands after it.
+  // user keeps typing, so the caret lands after it. The stamp comes from the
+  // handover round, not from today; see `qaStamp()`.
   const [summary, setSummary] = useState(
-    `QA_${todayStamp()}: Test giao diện và chức năng `,
+    `QA_${parent.stamp}: Test giao diện và chức năng `,
   );
   const [assignee, setAssignee] = useState(defaultAssignee?.accountId ?? '');
   const [busy, setBusy] = useState(false);
@@ -88,7 +98,12 @@ export function CreateQaDialog({
               className="w-full resize-y rounded border border-line bg-raised p-2.5 text-sm"
             />
             <p className="mt-1 text-xs text-muted">
-              Điền tiếp phần mô tả sau &ldquo;chức năng&rdquo;.
+              Điền tiếp phần mô tả sau &ldquo;chức năng&rdquo;. Ngày{' '}
+              <span className="text-ink">{readStamp(parent.stamp)}</span>
+              {parent.stamp === todayStamp()
+                ? ' (hôm nay — không thấy stamp nào ở sub-task)'
+                : ' lấy theo stamp của task FE/BE cùng story'}
+              .
             </p>
           </div>
 

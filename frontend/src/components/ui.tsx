@@ -70,12 +70,16 @@ const TONE_CLASS = {
 export function Badge({
   children,
   tone = 'neutral',
+  title,
 }: {
   children: ReactNode;
   tone?: keyof typeof TONE_CLASS;
+  /** Tooltip — a short badge often needs to explain what it is asserting. */
+  title?: string;
 }) {
   return (
     <span
+      {...(title ? { title } : {})}
       className={cn(
         'inline-flex items-center rounded border px-1.5 py-0.5 text-[11px] font-medium leading-4',
         TONE_CLASS[tone],

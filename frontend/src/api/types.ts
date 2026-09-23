@@ -75,7 +75,11 @@ export interface SlackPing {
 export interface PostedReport {
   commentId: string;
   url: string;
-  slack: SlackPing;
+}
+
+export interface SlackConfig {
+  enabled: boolean;
+  message: string;
 }
 
 export interface TransitionOption {

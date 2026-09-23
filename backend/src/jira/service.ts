@@ -183,13 +183,54 @@ export async function fetchHandoverBoard(projectKey: string): Promise<IssueSumma
 
   // Then pull in every sibling under the same parents, so the BE sub-tasks I
   // have to move to Done show up beside mine.
-  const parents = [...new Set(mine.flatMap((issue) => (issue.parentKey ? [issue.parentKey] : [])))];
+  //
+  // An improvement or bug I hold directly is a parent in its own right: the
+  // handover puts its QA sub-task underneath it (HWE-485 under HWE-482), so it
+  // has to be asked about too or the board cannot tell whether its QA exists.
+  const parents = [
+    ...new Set(
+      mine.flatMap((issue) =>
+        issue.parentKey && issue.issueType.toLowerCase() === 'sub-task'
+          ? [issue.parentKey]
+          : [issue.key],
+      ),
+    ),
+  ];
   const siblings = await fetchChildren(parents);
+  const doneQa = await fetchDoneQaChildren(parents);
 
   const byKey = new Map<string, IssueSummary>();
-  for (const issue of [...mine, ...siblings]) byKey.set(issue.key, issue);
+  for (const issue of [...mine, ...siblings, ...doneQa]) byKey.set(issue.key, issue);
   return [...byKey.values()];
 }
+
+/**
+ * Finished QA sub-tasks under these parents.
+ *
+ * The board hides Done work, but the "chưa có QA" badge has to know about a QA
+ * task the BA has already passed — otherwise a story that finished its round
+ * still reads as missing its QA. Only QA is carried back in; finished FE and BE
+ * sub-tasks stay hidden, which is what keeps the board readable (HWE-31 has 14
+ * children, 10 of them closed).
+ *
+ * Filtering happens here rather than in JQL. `summary ~ "QA"` looks like the
+ * obvious clause but silently misses the current naming: Jira's text index
+ * treats `QA_260827` as one token, so it matches `[QA] ...` and drops
+ * `QA_260827: ...`. Verified on live data — it found 3 of the 5 QA sub-tasks
+ * and missed HWE-340 and HWE-343. A missed QA is the one failure that matters,
+ * because it makes the badge claim a story has no QA when it does.
+ */
+async function fetchDoneQaChildren(parentKeys: string[]): Promise<IssueSummary[]> {
+  if (parentKeys.length === 0) return [];
+  const list = parentKeys.map((key) => `"${key}"`).join(', ');
+  const done = await searchAll(
+    `parent IN (${list}) AND statusCategory = Done ORDER BY created ASC`,
+  );
+  return done.filter((issue) => QA_TITLE.test(issue.summary));
+}
+
+/** `QA_260921:`, `[QA] ...` — both title shapes are live. See CLAUDE.md §1b. */
+const QA_TITLE = /^\s*\[?\s*QA\s*(?:[_:\]]|$)/i;
 
 /**
  * Unfinished sub-tasks under these parents, whoever they are assigned to.
@@ -372,17 +413,19 @@ export async function postReport(
   return {
     commentId: created.id,
     url: `https://${config.jira.site}/browse/${target.reportIssueKey}?focusedCommentId=${created.id}`,
-    slack: await pingSlack(),
   };
 }
 
 /**
  * Tell the channel the report is up.
  *
- * The Jira comment is already posted by the time this runs and cannot be taken
- * back, so a Slack failure is reported alongside the success rather than
- * thrown — otherwise the UI would show an error for a report that did go out,
- * and Bimo would post it twice.
+ * Deliberately not part of `postReport`: a working day usually means reporting
+ * both projects, and the message announces the day's reporting, not one issue.
+ * Firing it per report would ping the channel twice for one piece of news, so
+ * the UI keeps it as its own button and Bimo sends it once at the end.
+ *
+ * A failure is returned rather than thrown — the Jira comment it announces is
+ * already posted and cannot be taken back.
  */
 export async function pingSlack(): Promise<SlackPing> {
   if (!slackEnabled()) return { sent: false, skipped: true };

@@ -75,7 +75,6 @@ export interface SlackPing {
 export interface PostedReport {
   commentId: string;
   url: string;
-  slack: SlackPing;
 }
 
 /** Raw shape returned by `/rest/api/3/user/assignable/search`. */

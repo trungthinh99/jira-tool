@@ -91,6 +91,94 @@ export function todayStamp(date = new Date()): string {
   return `${year}${month}${day}`;
 }
 
+// Captures the `YYMMDD` that follows a BE/FE/QA prefix. Both `BE_260921:` and
+// the older `[BE_260820]` shape are matched; `FE_260921 (ALL):` too.
+const STAMP_PATTERN = /^\s*\[?\s*(?:BE|FE|QA)[_\s]*(\d{6})/i;
+
+export function stampFromSummary(summary: string): string | null {
+  return STAMP_PATTERN.exec(summary)?.[1] ?? null;
+}
+
+/**
+ * The `YYMMDD` a new QA sub-task should carry.
+ *
+ * It must match the round of work being handed over, not the day the button is
+ * pressed — press it the morning after and today's date names a round that does
+ * not exist. So the stamp is read off the sibling sub-tasks that are already
+ * there: `FE_260921` and `BE_260921` under a story mean its QA is `QA_260921`.
+ * Verified on live data: every story on the board carries exactly one stamp
+ * across its sub-tasks, and the QA tasks Bimo created by hand follow it.
+ *
+ * Falls back to today for a story whose sub-tasks are not named to the
+ * convention (HWE-328 on the live board has none). The story's own `updated`
+ * date would be the better fallback, but Jira does not return it inside
+ * `parent.fields` — fetching it would cost a request per story to cover a case
+ * where there is no round to match anyway.
+ */
+export function qaStamp(siblings: readonly IssueSummary[]): string {
+  // Newest first: a story handed over twice keeps both rounds' sub-tasks, and
+  // the QA being created now belongs to the latest one.
+  const stamps = siblings
+    .map((issue) => stampFromSummary(issue.summary))
+    .filter((stamp): stamp is string => stamp !== null)
+    .sort()
+    .reverse();
+
+  return stamps[0] ?? todayStamp();
+}
+
+/**
+ * Whether this round of work still needs its QA sub-task.
+ *
+ * The question is not "is there a QA task" but "is there one for *this*
+ * round" — HWE-303, HWE-291 and HWE-34 all carry a QA task that is Done, from
+ * rounds `260827` and earlier, while their current round `260921` has none.
+ * Matching on presence alone would call all three covered.
+ *
+ * A QA task with no stamp at all (the older `[QA] Test ...` shape) counts only
+ * when nothing else carries a stamp either. HWE-34 is why: its `[QA]` task is
+ * Done from a round that predates the convention, while its current round is
+ * `260921` — treating the unstamped task as "close enough" would hide a story
+ * that genuinely needs a new QA.
+ */
+export function needsQa(siblings: readonly IssueSummary[]): boolean {
+  const round = qaStamp(siblings);
+  return !siblings.some((issue) => isQaForRound(issue, round, siblings));
+}
+
+/** Whether this QA sub-task belongs to `round`. */
+function isQaForRound(
+  issue: IssueSummary,
+  round: string,
+  siblings: readonly IssueSummary[],
+): boolean {
+  if (taskRole(issue) !== 'qa') return false;
+  const stamp = stampFromSummary(issue.summary);
+  if (stamp !== null) return stamp === round;
+  // Unstamped `[QA] ...` counts only when nothing else is stamped either.
+  return !siblings.some((other) => stampFromSummary(other.summary) !== null);
+}
+
+/**
+ * Drop finished QA sub-tasks left over from earlier rounds.
+ *
+ * They are fetched on purpose — `needsQa()` cannot tell a covered round from an
+ * uncovered one without them — but they are history, not work in hand. HWE-303
+ * carries a Done `QA_260827` while its current round is `260921`; listing it
+ * under today's handover only invites moving the wrong task.
+ *
+ * A Done QA of the *current* round stays: it is this round's QA, and seeing
+ * that the BA has already passed it is the point.
+ */
+export function withoutStaleQa(siblings: readonly IssueSummary[]): IssueSummary[] {
+  const round = qaStamp(siblings);
+  return siblings.filter((issue) => {
+    if (taskRole(issue) !== 'qa') return true;
+    if (issue.statusCategory !== 'done') return true;
+    return isQaForRound(issue, round, siblings);
+  });
+}
+
 /** A story with the sub-tasks assigned to me underneath it. */
 export interface StoryGroup {
   parentKey: string;

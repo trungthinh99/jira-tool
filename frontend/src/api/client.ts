@@ -5,6 +5,7 @@ import type {
   PostedReport,
   ReportPayload,
   ReportTarget,
+  SlackConfig,
   SlackPing,
   TransitionOption,
 } from './types';
@@ -56,7 +57,9 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
-  /** Retry just the Slack ping, without re-posting the Jira comment. */
+  slackConfig: () => request<SlackConfig>('/slack'),
+
+  /** Sent once per day, after every project's report is up. */
   pingSlack: () => request<{ slack: SlackPing }>('/slack/ping', { method: 'POST' }),
 
   transitions: (issueKey: string) =>

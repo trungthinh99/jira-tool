@@ -76,6 +76,49 @@ Hệ quả cho code — ba điều dễ làm sai:
   hình` (HWE-191…HWE-280), mẫu mới `QA_YYMMDD: ...` (từ HWE-485). Khi **tạo**
   thì dùng mẫu mới; khi **nhận diện** phải bắt cả hai, nếu không task QA cũ sẽ
   bị đếm nhầm thành chưa tạo.
+- **`YYMMDD` của task QA là ngày của vòng bàn giao, KHÔNG phải ngày bấm nút.**
+  Đây là bug đã gặp thật: bấm `+ QA` sáng 22/09 cho story update 21/09 thì ra
+  `QA_260922` trong khi task FE là `FE_260921` — một vòng bàn giao không tồn
+  tại. `qaStamp()` trong `frontend/src/utils.ts` đọc stamp từ **tiêu đề các
+  sub-task anh em** (lấy vòng mới nhất nếu story bàn giao nhiều lần), dự phòng
+  là hôm nay.
+
+  Đã xác minh trên board thật: cả 7 story đều chỉ có **một** stamp duy nhất
+  xuyên suốt sub-task của nó, và ba task QA Bimo tạo tay trước đây (HWE-507,
+  HWE-508, HWE-517) đều khớp stamp với task FE cùng story — tức chính Bimo cũng
+  lấy ngày theo cách này.
+
+  Bẫy regex: `FE_260921 (ALL): [BE_260820] Bổ sung...` (HWE-493) có **hai**
+  stamp trong tiêu đề. Phải neo `^` để lấy `260921` của prefix, không phải
+  `260820` của phần tham chiếu. Story không sub-task nào theo mẫu (HWE-328 trên
+  board thật) thì rơi về hôm nay — dialog nói rõ để Bimo biết mà sửa tay.
+
+  Dự phòng lý tưởng hơn là `updated` của Story, nhưng Jira **không** trả field
+  đó trong `parent.fields` — lấy được thì tốn một request mỗi story, để phủ
+  đúng trường hợp vốn chẳng có vòng bàn giao nào để khớp.
+- **Nhãn "chưa có QA" so theo vòng, không phải "có QA hay chưa".**
+  `needsQa()` trong `frontend/src/utils.ts`. Trên board thật, HWE-291 và
+  HWE-303 đều **đã có** task QA (`QA_260827`, đã Done) nhưng vòng hiện tại là
+  `260921` nên vẫn phải báo thiếu; HWE-34 có `[QA]` không stamp cũng vậy. Chỉ
+  kiểm sự tồn tại thì bỏ sót cả ba.
+
+  Task QA **không** stamp chỉ được tính khi cả nhóm cũng không có stamp nào —
+  tức vòng đó có trước khi quy ước `YYMMDD` ra đời.
+
+  Vì nhãn phải biết cả QA **đã Done**, `fetchHandoverBoard()` gọi thêm
+  `fetchDoneQaChildren()`. Chỉ QA được lấy lại; FE/BE đã xong vẫn ẩn, nếu không
+  board sẽ ngập task cũ.
+
+  Nhưng những QA cũ đó **chỉ để tính nhãn, không hiện ra** —
+  `withoutStaleQa()` lọc chúng trước khi render. Chúng là lịch sử, không phải
+  việc đang làm. QA của **vòng hiện tại** mà đã Done thì vẫn hiện, vì biết BA
+  đã test pass là thông tin có ích.
+
+  **Bẫy đi kèm, nguy hiểm hơn cả hiển thị:** các nút "Chọn nhanh" (Task BE /
+  Task FE / Tất cả) từng chọn trên danh sách đầy đủ, nên sẽ tick cả QA cũ đang
+  bị ẩn rồi "Chuyển N task" đổi trạng thái một task không ai thấy trên màn
+  hình. Mọi thao tác chọn và số đếm giờ dùng `visible` trong `ActionsPage` —
+  thêm thao tác ghi mới thì phải dùng danh sách đó, đừng dùng `issues`.
 
 Improvement (vd HWE-482) đi tắt: không có sub-task FE/BE, Bimo làm thẳng rồi tạo
 QA sub-task ngay dưới nó. Vì vậy màn Thao tác cho tạo QA trực tiếp trên
@@ -163,10 +206,33 @@ thứ mình không nhìn thấy.
 Nếu Bimo bảo đổi mẫu, sửa `backend/src/jira/adf.ts` — cả `buildReportAdf()` và
 `renderReportText()`, vì hai hàm phải luôn mô tả cùng một báo cáo.
 
-### Báo Slack sau khi đăng
+### Báo Slack — một tin cho cả ngày, không phải một tin mỗi dự án
 
-Đăng báo cáo xong thì bắn một tin nhắn vào Slack (`em báo cáo rồi nha chị`) để
-chị khỏi phải tự vào Jira xem. Cấu hình ở `backend/.env`:
+Sau khi đăng báo cáo thì nhắn Slack (`em báo cáo rồi nha chị`) để chị khỏi phải
+tự vào Jira xem.
+
+**Nút Slack tách riêng khỏi nút "Đăng báo cáo".** Một ngày làm việc thường đụng
+cả hai dự án, nên bấm đăng hai lần — nếu Slack gắn vào lệnh đăng thì kênh nhận
+**hai** tin cho cùng một chuyện. Tin nhắn báo "hôm nay em đã báo cáo", không
+phải "vừa post lên PPP-354". Vì vậy:
+
+- `postReport()` **không** gọi Slack. Chỉ `POST /api/slack/ping` mới gửi.
+- Nút **"Nhắn tin Slack"** (màu `danger`) nằm **ngay dưới nút "Đăng báo cáo"**
+  trong cột phải của `ReportForm`, để trơn không box, và **luôn hiện** kể cả
+  chưa đăng gì. Đã thử đặt ở cuối trang và ẩn cho tới khi đăng xong — cả hai
+  đều hỏng: một ngày nhiều task đẩy nút xuống dưới hai màn hình cuộn, còn nút
+  chỉ hiện sau khi đăng thì lúc đi tìm sẽ không thấy đâu.
+- Nhắn xong mới hiện `✓ Đã nhắn Slack.` bên dưới. Nhãn nút cố định nên dòng
+  này là thứ duy nhất ngăn bấm lần hai — đừng bỏ. Tab nào đã đăng thì có ✓.
+- Nút **không bị khoá** khi chưa đăng — có hôm Bimo đăng tay trên Jira rồi chỉ
+  cần nhắn.
+
+**`ReportForm` bị remount khi đổi tab** (qua `key`), nên state Slack và "tab
+này đã đăng" **phải** nằm ở `ReportPage` (`postedByTarget`, `slackPing`) rồi
+truyền xuống qua prop `slack` — để trong form thì chuyển sang TMS là mất sạch
+dấu vết đã đăng HWE. Đổi ngày thì xoá hết, vì đó là một ngày báo cáo mới.
+
+Cấu hình ở `backend/.env`:
 
 | Biến | Ý nghĩa |
 | --- | --- |
@@ -189,12 +255,10 @@ Ba điều đã cân nhắc, đừng "sửa cho gọn":
 
 - **Thiếu token thì bỏ qua lặng lẽ**, không lỗi. Tool vốn chạy được không cần
   Slack; bắt buộc có token sẽ làm hỏng máy chưa cấu hình.
-- **Slack lỗi KHÔNG làm hỏng việc đăng báo cáo.** Comment Jira đã post thì
-  không rút lại được — trả lỗi cho cả thao tác sẽ khiến Bimo bấm đăng lại và
-  sinh comment trùng trên PPP-354/PPP-308. Vì vậy `postReport()` trả thêm
-  `slack: { sent, skipped, error }` và UI hiện cảnh báo riêng kèm nút
-  **"Gửi lại Slack"**, gọi `POST /api/slack/ping` — gửi mỗi tin nhắn, không
-  đụng Jira.
+- **Slack lỗi KHÔNG ảnh hưởng gì tới báo cáo trên Jira.** Hai việc đã tách
+  hẳn, nên `pingSlack()` trả `{ sent, skipped, error }` thay vì throw — lỗi
+  hiện ngay trong khối Slack, bấm lại là gửi lại, không đụng gì tới comment đã
+  post.
 - **Slack trả HTTP 200 kể cả khi từ chối**, lý do nằm ở `ok: false` + `error`.
   Chỉ xem status code là tưởng gửi thành công. `backend/src/slack/client.ts`
   dịch sẵn bốn mã hay gặp lúc cài (`not_in_channel`, `channel_not_found`,
@@ -253,10 +317,38 @@ Jira.
   cáo PPP-354 / PPP-308 — chúng assign cho Bimo và nằm ở In Progress vĩnh viễn —
   cùng các project lạ (SPB, PPP khác). Đã gặp thật khi kiểm thử.
 
+- **Đừng lọc task QA bằng `summary ~ "QA"` trong JQL.** Index full-text của
+  Jira tách token theo từ: `QA_260827` là **một** token nên không khớp với
+  `QA`, còn `[QA] ...` thì khớp. Đã đo trên board thật — clause đó tìm được 3
+  trong 5 task QA, bỏ sót HWE-340 và HWE-343. Bỏ sót một task QA là kiểu lỗi
+  tệ nhất ở đây vì nó làm nhãn "chưa có QA" nói sai. Lấy hết rồi khớp bằng
+  regex ở tầng code (`QA_TITLE` trong `service.ts`).
+
 - **Transition tra theo tên trạng thái, không hardcode id.** Trên HWE hiện tại
   id là `11` To Do · `21` In Progress · `31` Done · `51` Review, nhưng id là cấu
   hình workflow và đổi được khi board bị sửa. `transitionIssue()` gọi
   `/transitions` lấy danh sách rồi khớp theo tên.
+
+- **JQL đọc từ search index, và index trễ hơn lệnh ghi.** Đã đo thật trên
+  HWE-204 ngày 22/09/2026: transition trả về sau 962ms, `GET /issue/{key}` đọc
+  thấy trạng thái mới ngay, nhưng JQL phải tới ~1589ms mới thấy.
+
+  Hệ quả: gọi `load()` ngay sau khi chuyển trạng thái sẽ nhận lại **trạng thái
+  cũ**. Bimo gặp thật — chuyển 4 task BE sang Done thì 3 cái biến mất còn
+  HWE-479 vẫn nằm đó, vì nó là cái chuyển sau cùng nên index chưa kịp.
+
+  Cách chữa **không phải** là `setTimeout` đợi rồi mới gọi lại — đoán bao lâu
+  cho đủ là may rủi. `load()` nhận tham số `justMoved` (map key → status mới)
+  và tin kết quả transition hơn payload: task chuyển sang Done thì loại khỏi
+  danh sách luôn, task chuyển sang trạng thái khác thì vá lại status. Bỏ tick
+  cũng phải theo danh sách sau khi vá, nếu không lần chuyển sau sẽ gửi kèm một
+  task đã rời màn hình.
+
+- **Workflow của Bug khác Story.** HWE-204 ở `Review` chỉ đi tiếp được sang
+  `Done` hoặc `FIXING` — **không** có `In Progress`. Dropdown ở màn Thao tác
+  liệt kê 4 trạng thái chung, nên chọn trạng thái không hợp lệ cho một task là
+  chuyện xảy ra được; `transitionMany()` báo lỗi từng task và đi tiếp, đó là
+  chủ ý.
 
 - **Phân trang JQL phải đi hết.** `searchAll()` lặp theo `nextPageToken`. Một
   ngày làm nhiều có thể vượt một trang, và danh sách bị cắt âm thầm = báo cáo

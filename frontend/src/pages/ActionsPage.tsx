@@ -11,12 +11,34 @@ import {
   Spinner,
   statusTone,
 } from '../components/ui';
-import { ROLE_LABEL, cn, groupProjectInbox, taskRole } from '../utils';
+import {
+  ROLE_LABEL,
+  cn,
+  groupProjectInbox,
+  needsQa,
+  qaStamp,
+  taskRole,
+  withoutStaleQa,
+} from '../utils';
 import type { TaskRole } from '../utils';
 import { CreateQaDialog, type QaParent } from './CreateQaDialog';
 
 /** Statuses a sub-task can be pushed to, in workflow order. */
 const STATUSES = ['To Do', 'In Progress', 'Review', 'Done'];
+
+/**
+ * The status category Jira files a status under.
+ *
+ * Used to patch a row straight after a transition, so the board does not have
+ * to wait for Jira's search index to catch up. The names are fixed by the
+ * workflow on this site; `transitionIssue` still resolves real transitions by
+ * name, so nothing here is a hardcoded id.
+ */
+function categoryOf(status: string): string {
+  if (status === 'Done') return 'done';
+  if (status === 'To Do') return 'new';
+  return 'indeterminate';
+}
 
 /** Role badge colours — BE is someone else's work, FE is mine. */
 const ROLE_TONE: Record<TaskRole, 'neutral' | 'brand' | 'success' | 'warning'> = {
@@ -49,25 +71,49 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
    * it refreshes the data but leaves the user's view alone — the result banner,
    * what they had ticked, and which stories they had opened.
    */
-  const load = useCallback(async (targetId: string, opts: { afterWrite?: boolean } = {}) => {
+  const load = useCallback(
+    async (
+      targetId: string,
+      opts: { afterWrite?: boolean; justMoved?: ReadonlyMap<string, string> } = {},
+    ) => {
     setLoading(true);
     setError(null);
     if (!opts.afterWrite) setResults(null);
     try {
       const { issues: fetched } = await api.handover(targetId);
-      setIssues(fetched);
+      // Jira's search index lags a write, so a row we just moved can come back
+      // with its old status. Re-apply what the transition told us; the next
+      // plain refresh reads it from the server.
+      //
+      // A row moved to Done is dropped outright: the board's JQL excludes Done,
+      // so the only reason it is still here is the stale index. Leaving it in
+      // with a Done badge would be worse than the bug it replaces.
+      const moved = opts.justMoved;
+      const next =
+        moved && moved.size > 0
+          ? fetched.flatMap((issue) => {
+              const status = moved.get(issue.key);
+              if (!status || status === issue.status) return [issue];
+              if (categoryOf(status) === 'done' && taskRole(issue) !== 'qa') return [];
+              return [{ ...issue, status, statusCategory: categoryOf(status) }];
+            })
+          : fetched;
+      setIssues(next);
       // Stories start folded the first time a project is opened. A manual
       // refresh or a post-write reload must not fold away what the user opened.
       if (foldedFor.current !== targetId) {
         foldedFor.current = targetId;
-        setCollapsed(new Set(groupProjectInbox(fetched).stories.map((s) => s.parentKey)));
+        setCollapsed(new Set(groupProjectInbox(next).stories.map((s) => s.parentKey)));
       }
       // Nothing is ticked on arrival — every action here writes to Jira, so the
       // user picks deliberately. After a write we keep what was picked, minus
       // whatever left the board.
+      // Keyed off `next`, not `fetched`: a row that just left the board must
+      // lose its tick too, or the next bulk move silently includes a task that
+      // is no longer on screen.
       setSelected((current) =>
         opts.afterWrite
-          ? new Set(fetched.map((i) => i.key).filter((key) => current.has(key)))
+          ? new Set(next.map((issue) => issue.key).filter((key) => current.has(key)))
           : new Set(),
       );
     } catch (caught) {
@@ -76,7 +122,9 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (active) void load(active.id);
@@ -104,6 +152,48 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
   const standalone = useMemo(
     () => grouped.loose.flatMap((group) => group.items),
     [grouped],
+  );
+
+  /**
+   * Sub-tasks belonging to a standalone improvement or bug, by its key.
+   *
+   * These arrive in the same flat list and `groupProjectInbox` files them as
+   * their own story group, which would print the improvement twice — once as a
+   * row and once as a group header. They are pulled out here so the row can
+   * answer "does this already have its QA" on its own.
+   */
+  const standaloneKids = useMemo(() => {
+    const keys = new Set(standalone.map((issue) => issue.key));
+    const map = new Map<string, IssueSummary[]>();
+    for (const issue of issues) {
+      if (!issue.parentKey || !keys.has(issue.parentKey)) continue;
+      const list = map.get(issue.parentKey) ?? [];
+      list.push(issue);
+      map.set(issue.parentKey, list);
+    }
+    return map;
+  }, [issues, standalone]);
+
+  /** Story groups minus the ones that are really a standalone's children. */
+  const storyGroups = useMemo(
+    () => grouped.stories.filter((story) => !standaloneKids.has(story.parentKey)),
+    [grouped, standaloneKids],
+  );
+
+  /**
+   * Every task the board actually shows.
+   *
+   * `issues` also holds the finished QA sub-tasks fetched only to decide the
+   * "chưa có QA" badge. Selecting from that list would let a bulk move change a
+   * task nobody can see on screen, so all the quick-picks and the count work
+   * off this one instead.
+   */
+  const visible = useMemo(
+    () => [
+      ...storyGroups.flatMap((story) => withoutStaleQa(story.items)),
+      ...standalone,
+    ],
+    [storyGroups, standalone],
   );
 
   const toggle = (key: string) => {
@@ -137,7 +227,7 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
 
   /** Tick every sub-task of one role across the whole board. */
   const selectRole = (role: TaskRole) => {
-    setSelected(new Set(issues.filter((issue) => taskRole(issue) === role).map((i) => i.key)));
+    setSelected(new Set(visible.filter((issue) => taskRole(issue) === role).map((i) => i.key)));
   };
 
   /**
@@ -156,17 +246,16 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
   };
 
   const allCollapsed =
-    grouped.stories.length > 0 &&
-    grouped.stories.every((story) => collapsed.has(story.parentKey));
+    storyGroups.length > 0 && storyGroups.every((story) => collapsed.has(story.parentKey));
 
   const toggleAll = () => {
     setCollapsed((current) => {
       if (allCollapsed) {
         const next = new Set(current);
-        for (const story of grouped.stories) next.delete(story.parentKey);
+        for (const story of storyGroups) next.delete(story.parentKey);
         return next;
       }
-      return new Set([...current, ...grouped.stories.map((story) => story.parentKey)]);
+      return new Set([...current, ...storyGroups.map((story) => story.parentKey)]);
     });
   };
 
@@ -178,9 +267,14 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
     try {
       const { results: outcome } = await api.transitionMany(keys, toStatus);
       setResults(outcome);
+
       // Reload so statuses and the Done filter are accurate again, keeping the
-      // result banner the user has not read yet.
-      if (active) await load(active.id, { afterWrite: true });
+      // result banner the user has not read yet. `justMoved` carries what we
+      // know to have changed, which the reload trusts over the stale index.
+      const moved = new Map(
+        outcome.filter((result) => result.ok).map((result) => [result.key, toStatus]),
+      );
+      if (active) await load(active.id, { afterWrite: true, justMoved: moved });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Không chuyển được trạng thái.');
     } finally {
@@ -193,7 +287,17 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
   const failed = results?.filter((result) => !result.ok) ?? [];
   const succeeded = results?.filter((result) => result.ok) ?? [];
 
-  const renderRow = (issue: IssueSummary, nested: boolean) => {
+  /**
+   * `stamp` is the handover round a QA created from this row would belong to.
+   * A nested row inherits its story's round; a standalone improvement or bug
+   * carries its own, so it is read from the row itself.
+   */
+  const renderRow = (
+    issue: IssueSummary,
+    nested: boolean,
+    stamp?: string,
+    missingQa?: boolean,
+  ) => {
     const role = taskRole(issue);
     return (
       <li
@@ -221,6 +325,11 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
               {issue.key}
             </a>
             <Badge tone={statusTone(issue.statusCategory)}>{issue.status}</Badge>
+            {missingQa ? (
+              <Badge tone="warning" title={`Chưa có task QA_${stamp} cho vòng này`}>
+                chưa có QA
+              </Badge>
+            ) : null}
             {/* Creator → assignee. Both matter here: Jame creates the BE
                 sub-tasks, but the handover is about whose hands each one is
                 in right now. */}
@@ -236,7 +345,13 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
           size="sm"
           variant="ghost"
           title="Tạo task QA dưới issue này"
-          onClick={() => setQaParent(issue)}
+          onClick={() =>
+            setQaParent({
+              key: issue.key,
+              summary: issue.summary,
+              stamp: stamp ?? qaStamp([issue]),
+            })
+          }
         >
           + QA
         </Button>
@@ -272,8 +387,8 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
               {target.label}
             </button>
           ))}
-          <span className="ml-auto text-xs text-muted">{issues.length} task chưa xong</span>
-          {grouped.stories.length > 1 ? (
+          <span className="ml-auto text-xs text-muted">{visible.length} task chưa xong</span>
+          {storyGroups.length > 1 ? (
             <Button size="sm" variant="ghost" onClick={toggleAll}>
               {allCollapsed ? 'Mở hết' : 'Thu hết'}
             </Button>
@@ -289,7 +404,7 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
           <Button size="sm" onClick={() => selectRole('fe')}>
             Task FE
           </Button>
-          <Button size="sm" onClick={() => setMany(issues.map((i) => i.key), true)}>
+          <Button size="sm" onClick={() => setMany(visible.map((i) => i.key), true)}>
             Tất cả
           </Button>
           <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
@@ -346,18 +461,23 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
       ) : null}
 
       <Card>
-        {loading && issues.length === 0 ? <Spinner /> : null}
+        {loading && visible.length === 0 ? <Spinner /> : null}
 
-        {!loading && issues.length === 0 && !error ? (
+        {!loading && visible.length === 0 && !error ? (
           <EmptyState message="Không có task nào đang chờ xử lý. 🎉" />
         ) : null}
 
-        {grouped.stories.map((story) => {
+        {storyGroups.map((story) => {
           const open = !collapsed.has(story.parentKey);
-          const keys = story.items.map((issue) => issue.key);
+          // The round and the badge are read from the full list; the rows, the
+          // count and the checkboxes work off the visible one.
+          const round = qaStamp(story.items);
+          const missingQa = needsQa(story.items);
+          const items = withoutStaleQa(story.items);
+          const keys = items.map((issue) => issue.key);
           const allOn = keys.every((key) => selected.has(key));
           const picked = keys.filter((key) => selected.has(key)).length;
-          const roles = new Set(story.items.map((issue) => taskRole(issue)));
+          const roles = new Set(items.map((issue) => taskRole(issue)));
           return (
             <section key={story.parentKey} className="border-t border-line first:border-t-0">
               <header className="flex items-center gap-2 bg-raised pr-4">
@@ -393,6 +513,11 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
                     {story.parentSummary ?? '(không có tiêu đề)'}
                   </span>
                 </button>
+                {missingQa ? (
+                  <Badge tone="warning" title={`Chưa có task QA_${round} cho vòng này`}>
+                    chưa có QA
+                  </Badge>
+                ) : null}
                 {/* Per-story quick picks: the handover moves one story's BE
                     sub-tasks, then that same story's FE ones. */}
                 {roles.has('be') ? (
@@ -400,7 +525,7 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
                     size="sm"
                     variant="ghost"
                     title="Chỉ chọn task BE của story này"
-                    onClick={() => selectRoleInStory(story.items, 'be')}
+                    onClick={() => selectRoleInStory(items, 'be')}
                   >
                     BE
                   </Button>
@@ -410,13 +535,13 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
                     size="sm"
                     variant="ghost"
                     title="Chỉ chọn task FE của story này"
-                    onClick={() => selectRoleInStory(story.items, 'fe')}
+                    onClick={() => selectRoleInStory(items, 'fe')}
                   >
                     FE
                   </Button>
                 ) : null}
                 <span className="shrink-0 text-xs text-muted">
-                  {picked > 0 ? `${picked}/${story.items.length}` : story.items.length}
+                  {picked > 0 ? `${picked}/${items.length}` : items.length}
                 </span>
                 <Button
                   size="sm"
@@ -426,13 +551,14 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
                     setQaParent({
                       key: story.parentKey,
                       summary: story.parentSummary ?? story.parentKey,
+                      stamp: round,
                     })
                   }
                 >
                   + QA
                 </Button>
               </header>
-              {open ? <ul>{story.items.map((issue) => renderRow(issue, true))}</ul> : null}
+              {open ? <ul>{items.map((issue) => renderRow(issue, true, round))}</ul> : null}
             </section>
           );
         })}
@@ -442,7 +568,16 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
             <h3 className="bg-raised px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted">
               Improvement / Bug · {standalone.length}
             </h3>
-            <ul>{standalone.map((issue) => renderRow(issue, false))}</ul>
+            <ul>
+              {standalone.map((issue) => {
+                // Its own QA sub-tasks, if any, decide both the round and
+                // whether the badge shows. With none, the round falls back to
+                // the improvement's own title, then to today.
+                const kids = standaloneKids.get(issue.key) ?? [];
+                const family = [...kids, issue];
+                return renderRow(issue, false, qaStamp(family), needsQa(family));
+              })}
+            </ul>
           </section>
         ) : null}
       </Card>

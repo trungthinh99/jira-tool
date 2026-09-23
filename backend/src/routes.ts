@@ -1,5 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
-import { config, findTarget, REPORT_TARGETS, type Mention } from './config.js';
+import { config, findTarget, REPORT_TARGETS, slackEnabled, type Mention } from './config.js';
 import {
   buildReport,
   createSubtask,
@@ -278,12 +278,20 @@ routes.post(
   }),
 );
 
+/** Whether the UI should offer the Slack button at all. */
+routes.get(
+  '/slack',
+  handle(async (_req, res) => {
+    res.json({ enabled: slackEnabled(), message: config.slack.message });
+  }),
+);
+
 /**
- * Re-send the Slack ping on its own.
+ * Send the Slack ping.
  *
- * The report route never fails over Slack, so a failed ping leaves a posted
- * Jira comment behind. This lets the UI retry just the ping instead of
- * re-posting the report and duplicating the comment.
+ * Its own route because one working day usually means two reports (HWE and
+ * TMS) but only one message — see `pingSlack()`. Bimo posts each report, then
+ * sends this once.
  */
 routes.post(
   '/slack/ping',
