@@ -15,6 +15,11 @@ export interface IssueSummary {
   created: string | null;
   updated: string | null;
   url: string;
+  /**
+   * On the report because it is still in progress, not because its status
+   * changed that day — a task spanning several days.
+   */
+  wip?: boolean;
 }
 
 export interface Mention {

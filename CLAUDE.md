@@ -76,6 +76,10 @@ Hệ quả cho code — ba điều dễ làm sai:
   hình` (HWE-191…HWE-280), mẫu mới `QA_YYMMDD: ...` (từ HWE-485). Khi **tạo**
   thì dùng mẫu mới; khi **nhận diện** phải bắt cả hai, nếu không task QA cũ sẽ
   bị đếm nhầm thành chưa tạo.
+- **Mỗi dự án viết prefix hơi khác nhau.** SR dùng `FE_260923 (All)` — chữ
+  `All` viết hoa khác HWE `(ALL)` — và còn nhiều task mẫu cũ `[FE] Cắt giao
+  diện ...` không có stamp. `taskRole()` và `stampFromSummary()` đã kiểm trên
+  cả hai, nhưng thêm dự án mới thì kiểm lại bằng tiêu đề thật trước đã.
 - **`YYMMDD` của task QA là ngày của vòng bàn giao, KHÔNG phải ngày bấm nút.**
   Đây là bug đã gặp thật: bấm `+ QA` sáng 22/09 cho story update 21/09 thì ra
   `QA_260922` trong khi task FE là `FE_260921` — một vòng bàn giao không tồn
@@ -127,15 +131,20 @@ Improvement/Bug.
 QA sub-task mẫu — HWE-485 dưới HWE-482: `issuetype: Sub-task`, `parent` là chính
 Improvement đó, `assignee: sney`, `reporter: MOBI`, trạng thái tạo ra là `To Do`.
 
-## 2. Hai dự án, hai đích báo cáo — không được trộn
+## 2. Ba dự án, ba đích báo cáo — không được trộn
 
-Đây là ràng buộc nghiệp vụ quan trọng nhất. Một ngày làm việc thường đụng cả hai
+Đây là ràng buộc nghiệp vụ quan trọng nhất. Một ngày làm việc thường đụng nhiều
 dự án, nhưng **mỗi dự án báo cáo riêng, mention người riêng**:
 
 | Dự án | Project key | Issue nhận báo cáo | Mention |
 | --- | --- | --- | --- |
 | Hwashin ERP | `HWE` | `PPP-354` | @Ruby @sney |
 | TMS | `DT` | `PPP-308` | @Sumi @Ruby |
+| SportsRab | `SR` | `PPP-351` | @Ruby @Sumi @Minjun |
+
+**Thứ tự mention của SR ngược với TMS** (Ruby trước, Sumi sau). Lấy từ lịch sử
+comment thật trên PPP-351, không suy từ target khác — đừng "sửa cho nhất quán".
+**Minjun** do Bimo thêm ngày 23/09/2026, không có trong lịch sử comment cũ.
 
 Post nhầm đích hoặc mention nhầm người là lỗi nghiệp vụ, không phải lỗi hiển
 thị. Vì vậy ba thứ đó (project, issue, mention) khai báo **cùng một chỗ** trong
@@ -151,8 +160,9 @@ nên không cần sửa gì bên FE.
 | --- | --- | --- |
 | MOBI (Bimo) | `712020:3f2962d5-3b89-4885-985c-444b4cd4f5cc` | FE — chủ tool |
 | sney | `712020:d22b3123-52e3-46cb-b435-4b9a30fb166f` | BA/QA — mention ở báo cáo HWE |
-| Ruby | `712020:cc414e81-af9e-4033-8159-e7ed19785489` | mention ở **cả hai** báo cáo |
-| Sumi | `70121:5b5e92a5-862c-4edc-994f-c02ab8a3280f` | mention ở báo cáo TMS |
+| Ruby | `712020:cc414e81-af9e-4033-8159-e7ed19785489` | mention ở **cả ba** báo cáo |
+| Sumi | `70121:5b5e92a5-862c-4edc-994f-c02ab8a3280f` | mention ở báo cáo TMS và SportsRab |
+| Minjun | `712020:9f629ab7-904b-49b4-95a8-a2aed75661a6` | mention ở báo cáo SportsRab |
 
 (Vai trò cụ thể của Ruby và Sumi chưa được xác nhận — bảng này chỉ ghi chắc
 chắn ai được mention ở đâu, theo lịch sử comment thật. Jame là BE, tạo các
@@ -212,8 +222,8 @@ Sau khi đăng báo cáo thì nhắn Slack (`em báo cáo rồi nha chị`) đ�
 tự vào Jira xem.
 
 **Nút Slack tách riêng khỏi nút "Đăng báo cáo".** Một ngày làm việc thường đụng
-cả hai dự án, nên bấm đăng hai lần — nếu Slack gắn vào lệnh đăng thì kênh nhận
-**hai** tin cho cùng một chuyện. Tin nhắn báo "hôm nay em đã báo cáo", không
+nhiều dự án, nên bấm đăng nhiều lần — nếu Slack gắn vào lệnh đăng thì kênh nhận
+**mỗi dự án một** tin cho cùng một chuyện. Tin nhắn báo "hôm nay em đã báo cáo", không
 phải "vừa post lên PPP-354". Vì vậy:
 
 - `postReport()` **không** gọi Slack. Chỉ `POST /api/slack/ping` mới gửi.
@@ -269,7 +279,7 @@ Scopes — thêm nhầm chỗ thì vẫn ra `xoxb-` chứ không ra `xoxp-`. Th�
 **phải Reinstall app** thì token mới có hiệu lực. Và tài khoản gửi phải là thành
 viên của kênh, nếu không Slack trả `not_in_channel`.
 
-Hiện cả hai dự án dùng chung một kênh. Muốn tách kênh theo dự án thì thêm field
+Hiện cả ba dự án dùng chung một kênh. Muốn tách kênh theo dự án thì thêm field
 vào `REPORT_TARGETS` (mục 2) chứ đừng đẻ bảng tra song song.
 
 ### Quy ước phần trăm
@@ -300,11 +310,35 @@ Jira.
   `contentFormat: html` **từ chối** `data-mention-id`, nên phải gọi thẳng
   `POST /rest/api/3/issue/{key}/comment`.
 
-- **`status CHANGED DURING` bỏ sót task.** JQL thống kê trong ngày (menu Báo
-  cáo) chỉ bắt task có đổi trạng thái. Task làm cả ngày mà chưa chuyển status sẽ
-  **không** xuất hiện. Đây là đánh đổi có chủ ý — nới JQL ra `updated >=` sẽ kéo
-  theo cả task chỉ được comment. Bù bằng ô "Thêm thủ công" trên UI. **Đừng tự
-  nới JQL này** mà chưa hỏi Bimo.
+- **Thống kê ngày lấy từ HAI nguồn.** `fetchDayActivity()` gộp:
+
+  1. `status CHANGED DURING (...)` — task thật sự đổi trạng thái trong ngày.
+  2. `status IN ("In Progress", "FIXING")` — task đang làm dở, **không giới
+     hạn ngày**.
+
+  Nguồn 2 thêm ngày 23/09/2026 vì nguồn 1 một mình thì bỏ sót đúng loại task
+  tốn công nhất: một task làm ba ngày liền chỉ đổi status ở ngày cuối, nên hai
+  ngày đầu báo cáo im lặng về nó. Bimo cần báo 70% → 80% → 90% trong khi status
+  vẫn là In Progress suốt.
+
+  Task thuộc nguồn 2 được đánh dấu `wip: true`, UI hiện nhãn **"đang làm"**.
+  Task vừa đổi status hôm nay thì thuộc nguồn 1 (ưu tiên), không gắn `wip`.
+
+  **Không** nới thành `updated >=` — nó kéo theo cả task chỉ bị comment hoặc
+  sửa mô tả. Đã cân nhắc và cố ý không làm.
+
+- **% của task đang làm dở đọc ngược từ báo cáo hôm trước.**
+  `parseTaskPercents()` trong `parseReport.ts` bóc `key → %` từ comment gần
+  nhất, và `ReportForm` dùng nó làm giá trị mặc định **chỉ cho dòng `wip`** —
+  hôm qua báo 70% thì hôm nay mở ra 70% để Bimo sửa thành 80%, thay vì tụt về
+  mặc định theo status. Dòng vừa Done hôm nay thì vẫn lấy `defaultPercent()`
+  (100%), không đọc ngược.
+
+  **Key lấy từ `href`, không phải từ text hiển thị.** Từ 21/09/2026 dòng báo
+  cáo hiện tiêu đề chứ không hiện URL, nên key chỉ còn trong link. Bóc theo
+  text chỉ khớp 1/21 dòng trên PPP-354; bóc theo `href` khớp 21/21.
+
+  Dòng `80% → 100%` thì lấy **số cuối**.
 
 - **JQL của Inbox đã được nới ngày 21/09/2026**, khi thêm filter status và
   người làm. Trước: `assignee = currentUser() AND status = "To Do"`. Sau:
@@ -344,11 +378,23 @@ Jira.
   cũng phải theo danh sách sau khi vá, nếu không lần chuyển sau sẽ gửi kèm một
   task đã rời màn hình.
 
-- **Workflow của Bug khác Story.** HWE-204 ở `Review` chỉ đi tiếp được sang
-  `Done` hoặc `FIXING` — **không** có `In Progress`. Dropdown ở màn Thao tác
-  liệt kê 4 trạng thái chung, nên chọn trạng thái không hợp lệ cho một task là
-  chuyện xảy ra được; `transitionMany()` báo lỗi từng task và đi tiếp, đó là
-  chủ ý.
+- **Bug chạy workflow riêng.** Đã tra `/rest/api/3/project/{key}/statuses` trên
+  cả HWE, DT và SR — giống nhau cả ba:
+
+  | Issue type | Trạng thái |
+  | --- | --- |
+  | Bug | `TO FIX` · `FIXING` · `Review` · `Done` |
+  | Còn lại (Story, Sub-task, Task, Epic, Improvement) | `To Do` · `In Progress` · `Review` · `Done` |
+
+  Dropdown ở màn Thao tác **không** liệt kê cứng nữa mà đổi theo task đang
+  tick (`statusesFor()` trong `ActionsPage`). Tick lẫn Bug với loại khác thì
+  chỉ còn `Review` và `Done` — hai trạng thái duy nhất cả hai workflow đều
+  nhận. Trạng thái đang chọn tự nhảy về `Review` khi cái cũ hết hợp lệ, nếu
+  không sẽ gửi lệnh Jira từ chối ngay.
+
+  Vẫn còn trường hợp workflow không cho đi thẳng: HWE-529 ở `TO FIX` chỉ sang
+  được `FIXING`, không nhảy thẳng `Done`. `transitionMany()` báo lỗi từng task
+  và vẫn chạy tiếp — đó là chủ ý, không phải thiếu sót.
 
 - **Phân trang JQL phải đi hết.** `searchAll()` lặp theo `nextPageToken`. Một
   ngày làm nhiều có thể vượt một trang, và danh sách bị cắt âm thầm = báo cáo
@@ -457,23 +503,25 @@ Tính tới **21/09/2026**, tool đã dựng xong và chạy với dữ liệu J
 | Thống kê ngày 21/09 | 3 task HWE Done → tự điền 100% |
 | Thống kê ngày 18/09, tab TMS | 9 task DT, mention tự đổi `@Sumi @Ruby`, đích sang PPP-308 |
 | Tách project | 20 HWE / 9 DT, không lẫn |
-| Prefill "Next task" | Đọc ngược từ comment gần nhất, đúng cho cả hai dự án |
+| Prefill "Next task" | Đọc ngược từ comment gần nhất, đúng cho cả ba dự án |
 | Preview | Khớp mẫu nhà, tiếng Việt không lỗi font |
+| **SportsRab** (23/09) | Tab hiện ở cả 3 menu. Handover 4 task (2 FE tôi + 2 BE Joseph), gom đúng 2 story SR-583/SR-584. Preview ngày 13/08 ra đúng SR-226/SR-228 như comment gốc, mention `@Ruby @Sumi`, đích PPP-351 |
+| **Nhắn Slack** (22/09) | Đã gửi thật, hiện dưới tên MOBi không phải bot |
+| **Task đang làm dở** (23/09) | Xem ngày 24/09 (chưa ai đổi status): vẫn ra SR-591/SR-589 gắn nhãn "đang làm", tick sẵn, % lấy từ báo cáo trước. Sửa 70→80% rồi dựng lại ra đúng mẫu |
+| Đọc ngược % | PPP-354 bóc được 21/21 dòng, PPP-308 và PPP-351 mỗi cái 2/2 |
 | type-check + build | Sạch cả hai phía |
 
 **CHƯA chạy thật — cần Bimo bấm thử:**
 
-- **Nút "Đăng báo cáo"** — sẽ post comment thật lên PPP-354 / PPP-308, và
-  (nếu đã cấu hình) nhắn Slack.
-- **Gửi Slack** — chưa chạy lần nào vì chưa có `SLACK_BOT_TOKEN`. Thử riêng
-  được bằng `POST /api/slack/ping` mà không đụng gì tới Jira.
+- **Nút "Đăng báo cáo"** — sẽ post comment thật lên PPP-354 / PPP-308 /
+  PPP-351.
 - **Nút "Bắt đầu"** ở Inbox — sẽ đổi trạng thái task thật sang In Progress.
 - **Menu Thao tác** — nút "Chuyển N task" đổi trạng thái hàng loạt, nút "+ QA"
   tạo sub-task thật. Phần đọc (`GET /targets/:id/handover`) đã kiểm trên dữ
   liệu thật: 27 task chưa xong, gom đúng 5 Story, phân đúng 14 FE / 12 BE.
 
 Cả hai đều ghi lên Jira nên tôi không tự chạy. Code đã xong; nếu ADF có gì lệch
-mẫu thì sửa `adf.ts`. **Khi kiểm thử, đừng post thử lên PPP-354/PPP-308** — đó
+mẫu thì sửa `adf.ts`. **Khi kiểm thử, đừng post thử lên PPP-354/PPP-308/PPP-351** — đó
 là issue báo cáo thật mà BA và PM đang đọc. Tạo issue nháp riêng để thử.
 
 ### Nguyên tắc: không tự ý ghi lên Jira
@@ -494,4 +542,5 @@ Bimo chưa yêu cầu, ghi lại để khỏi bàn lại từ đầu:
   tính lại chỗ giữ token.
 - **Đính ảnh vào báo cáo** — script sẵn ở `D:\Note\jira-tools\`, chưa nối vào
   tool.
-- **Nới JQL thống kê** — xem mục 4, đã cân nhắc và cố ý không làm.
+- **Nới JQL thống kê thành `updated >=`** — xem mục 4. Đã giải quyết vấn đề gốc
+  bằng nguồn "đang làm dở" thay vì nới `updated`, nên hướng này khỏi bàn lại.

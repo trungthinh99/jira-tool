@@ -40,8 +40,11 @@ export const api = {
       `/activity?date=${encodeURIComponent(date)}`,
     ),
 
-  previousNextTasks: (targetId: string) =>
-    request<{ nextTasks: string[] }>(`/targets/${targetId}/previous-next-tasks`),
+  /** Seeds from the last report: its "Next task" lines and its percents. */
+  previousReport: (targetId: string) =>
+    request<{ nextTasks: string[]; percents: Record<string, number> }>(
+      `/targets/${targetId}/previous-next-tasks`,
+    ),
 
   users: (targetId: string) => request<{ users: JiraUser[] }>(`/targets/${targetId}/users`),
 

@@ -23,8 +23,25 @@ import {
 import type { TaskRole } from '../utils';
 import { CreateQaDialog, type QaParent } from './CreateQaDialog';
 
-/** Statuses a sub-task can be pushed to, in workflow order. */
-const STATUSES = ['To Do', 'In Progress', 'Review', 'Done'];
+/**
+ * Statuses each kind of issue can be pushed to, in workflow order.
+ *
+ * Bugs run a different workflow from everything else: `TO FIX → FIXING` where
+ * a story has `To Do → In Progress`. Verified against `/project/{key}/statuses`
+ * on HWE, DT and SR — all three agree, so this is a site-wide split by issue
+ * type, not a per-project one. Offering "In Progress" for a bug fails the whole
+ * transition with `No transition to "In Progress"`.
+ */
+const STORY_STATUSES = ['To Do', 'In Progress', 'Review', 'Done'];
+const BUG_STATUSES = ['TO FIX', 'FIXING', 'Review', 'Done'];
+
+function statusesFor(issues: readonly IssueSummary[]): string[] {
+  const hasBug = issues.some((issue) => issue.issueType.toLowerCase() === 'bug');
+  const hasOther = issues.some((issue) => issue.issueType.toLowerCase() !== 'bug');
+  // A mixed selection has no status both sides accept beyond these two.
+  if (hasBug && hasOther) return ['Review', 'Done'];
+  return hasBug ? BUG_STATUSES : STORY_STATUSES;
+}
 
 /**
  * The status category Jira files a status under.
@@ -36,7 +53,7 @@ const STATUSES = ['To Do', 'In Progress', 'Review', 'Done'];
  */
 function categoryOf(status: string): string {
   if (status === 'Done') return 'done';
-  if (status === 'To Do') return 'new';
+  if (status === 'To Do' || status === 'TO FIX') return 'new';
   return 'indeterminate';
 }
 
@@ -195,6 +212,28 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
     ],
     [storyGroups, standalone],
   );
+
+  /**
+   * Statuses the dropdown may offer, decided by what is ticked.
+   *
+   * With nothing ticked it falls back to the board's own mix, so the control
+   * is not empty before the first pick.
+   */
+  const statusOptions = useMemo(
+    () =>
+      statusesFor(
+        selected.size > 0 ? visible.filter((issue) => selected.has(issue.key)) : visible,
+      ),
+    [visible, selected],
+  );
+
+  // Keep the chosen status legal as the selection changes: ticking a bug while
+  // "In Progress" is chosen would otherwise send a transition Jira rejects.
+  useEffect(() => {
+    if (!statusOptions.includes(toStatus)) {
+      setToStatus(statusOptions.includes('Review') ? 'Review' : (statusOptions[0] ?? 'Review'));
+    }
+  }, [statusOptions, toStatus]);
 
   const toggle = (key: string) => {
     setSelected((current) => {
@@ -404,6 +443,9 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
           <Button size="sm" onClick={() => selectRole('fe')}>
             Task FE
           </Button>
+          <Button size="sm" onClick={() => selectRole('qa')}>
+            Task QA
+          </Button>
           <Button size="sm" onClick={() => setMany(visible.map((i) => i.key), true)}>
             Tất cả
           </Button>
@@ -420,7 +462,7 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
               onChange={(event) => setToStatus(event.target.value)}
               className="h-7 rounded border border-line bg-surface px-2 text-xs"
             >
-              {STATUSES.map((status) => (
+              {statusOptions.map((status) => (
                 <option key={status} value={status}>
                   → {status}
                 </option>
@@ -518,8 +560,8 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
                     chưa có QA
                   </Badge>
                 ) : null}
-                {/* Per-story quick picks: the handover moves one story's BE
-                    sub-tasks, then that same story's FE ones. */}
+                {/* Per-story quick picks, in handover order: this story's BE
+                    sub-tasks, then its FE ones, then the QA it hands to the BA. */}
                 {roles.has('be') ? (
                   <Button
                     size="sm"
@@ -538,6 +580,16 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
                     onClick={() => selectRoleInStory(items, 'fe')}
                   >
                     FE
+                  </Button>
+                ) : null}
+                {roles.has('qa') ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    title="Chỉ chọn task QA của story này"
+                    onClick={() => selectRoleInStory(items, 'qa')}
+                  >
+                    QA
                   </Button>
                 ) : null}
                 <span className="shrink-0 text-xs text-muted">

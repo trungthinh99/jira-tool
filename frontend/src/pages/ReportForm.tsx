@@ -70,31 +70,47 @@ export function ReportForm({
   const [users, setUsers] = useState<JiraUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(true);
   const [usersError, setUsersError] = useState<string | null>(null);
+  /**
+   * Percents from the previous report, by issue key. `null` until it has been
+   * fetched, so the rows are not built from a default that is about to be
+   * replaced — a carried-over task would flash 70% and then jump.
+   */
+  const [lastPercents, setLastPercents] = useState<Record<string, number> | null>(null);
 
   // Rebuild the task rows whenever the day's activity changes. Manual rows are
   // deliberately dropped here: they belong to the day they were typed for.
   useEffect(() => {
+    if (lastPercents === null) return;
     setRows(
       issues.map((issue) => ({
         key: issue.key,
-        percent: defaultPercent(issue),
+        // A task carried over from yesterday reopens at the figure it was last
+        // reported at; the status default would drag it back to 70%. Only for
+        // carried-over rows: one that moved to Done today is 100%, whatever
+        // yesterday said.
+        percent: (issue.wip ? lastPercents[issue.key] : undefined) ?? defaultPercent(issue),
         included: true,
         issue,
       })),
     );
     setPreview(null);
-  }, [issues]);
+  }, [issues, lastPercents]);
 
-  // Seed "Next task" from the previous report on this issue.
+  // Seed "Next task" and the carried-over percents from the previous report.
   useEffect(() => {
     let cancelled = false;
     api
-      .previousNextTasks(target.id)
-      .then(({ nextTasks: lines }) => {
-        if (!cancelled) setNextTasks(lines.join('\n'));
+      .previousReport(target.id)
+      .then(({ nextTasks: lines, percents }) => {
+        if (cancelled) return;
+        setNextTasks(lines.join('\n'));
+        setLastPercents(percents);
       })
       .catch(() => {
-        if (!cancelled) setNextTasks(target.defaultNextTasks.join('\n'));
+        if (cancelled) return;
+        setNextTasks(target.defaultNextTasks.join('\n'));
+        // Empty rather than left null: the rows must still render.
+        setLastPercents({});
       });
     return () => {
       cancelled = true;
@@ -236,6 +252,13 @@ export function ReportForm({
                       ) : (
                         <Badge tone="warning">thủ công</Badge>
                       )}
+                      {/* Says why the row is here: it did not move today, it is
+                          simply still open. The percent is yesterday's. */}
+                      {row.issue?.wip ? (
+                        <Badge tone="neutral" title="Chưa đổi trạng thái hôm nay — % lấy từ báo cáo gần nhất">
+                          đang làm
+                        </Badge>
+                      ) : null}
                     </div>
                     {row.issue ? (
                       <p className="mt-0.5 truncate text-xs text-muted" title={row.issue.summary}>

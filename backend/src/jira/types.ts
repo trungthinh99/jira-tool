@@ -17,6 +17,11 @@ export interface IssueSummary {
   created: string | null;
   updated: string | null;
   url: string;
+  /**
+   * Set when the row is on the report because it is still in progress, rather
+   * than because its status changed that day. See `fetchDayActivity()`.
+   */
+  wip?: boolean;
 }
 
 /** Raw shape returned by `/rest/api/3/search/jql`, narrowed to what we read. */

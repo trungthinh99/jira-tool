@@ -2,7 +2,7 @@ import { config, REPORT_TARGETS, slackEnabled, type ReportTarget } from '../conf
 import { postSlackMessage } from '../slack/client.js';
 import { jiraFetch } from './client.js';
 import { buildReportAdf, renderReportText, type ReportInput } from './adf.js';
-import { parseNextTasks } from './parseReport.js';
+import { parseNextTasks, parseTaskPercents } from './parseReport.js';
 import type {
   IssueSummary,
   JiraUser,
@@ -108,20 +108,52 @@ export async function fetchInbox(): Promise<IssueSummary[]> {
   return [...byKey.values()];
 }
 
+/** Statuses that mean "I am working on this right now". */
+const WIP_STATUSES = ['In Progress', 'FIXING'];
+
 /**
- * Menu 2 — what moved on a given day.
+ * Menu 2 — what to report for a given day.
  *
- * `status CHANGED DURING (...)` is the honest question for a daily report: it
- * lists what actually progressed, not what merely got a comment. It does mean a
- * task worked on all day without a status change is absent, which is why the UI
- * lets the user add lines by hand.
+ * Two sources, because a day's work is not the same as a day's status changes:
+ *
+ * 1. `status CHANGED DURING (...)` — what actually moved. Honest, but blind to
+ *    a task worked on all day without changing state.
+ * 2. Everything still In Progress or FIXING — the work in hand. A story that
+ *    takes three days is reported on all three, at 70% then 80% then 90%, and
+ *    its status never changes until the last one. Without this the report goes
+ *    silent on exactly the tasks taking the most effort.
+ *
+ * The second list is not restricted by date: "still in progress" has no day
+ * attached. That is correct for today and harmless for a past date — a task
+ * that is in progress now almost certainly was then, and anything wrong is one
+ * untick away. `wip` on the result marks which rows came from source 2 so the
+ * UI can say where a line came from.
  */
-export function fetchDayActivity(date: string): Promise<IssueSummary[]> {
+export async function fetchDayActivity(date: string): Promise<IssueSummary[]> {
   const start = `${date} 00:00`;
   const end = `${date} 23:59`;
-  return searchAll(
-    `assignee = currentUser() AND status CHANGED DURING ("${start}", "${end}") ORDER BY updated DESC`,
-  );
+  const projects = REPORT_TARGETS.map((t) => `"${t.projectKey}"`).join(', ');
+  const wipList = WIP_STATUSES.map((s) => `"${s}"`).join(', ');
+
+  const [moved, inProgress] = await Promise.all([
+    searchAll(
+      `assignee = currentUser() AND status CHANGED DURING ("${start}", "${end}") ` +
+        `ORDER BY updated DESC`,
+    ),
+    searchAll(
+      `project IN (${projects}) AND assignee = currentUser() ` +
+        `AND status IN (${wipList}) ORDER BY updated DESC`,
+    ),
+  ]);
+
+  // A task that both moved today and is still in progress belongs to the first
+  // list: it has a real status change to report.
+  const byKey = new Map<string, IssueSummary>();
+  for (const issue of moved) byKey.set(issue.key, issue);
+  for (const issue of inProgress) {
+    if (!byKey.has(issue.key)) byKey.set(issue.key, { ...issue, wip: true });
+  }
+  return [...byKey.values()];
 }
 
 /** The account the tool's token belongs to — used to label "me" in the UI. */
@@ -381,20 +413,35 @@ export async function transitionIssue(issueKey: string, toStatus: string): Promi
   });
 }
 
-/** Seed the "Next task" box from the previous report on that issue. */
-export async function fetchPreviousNextTasks(target: ReportTarget): Promise<string[]> {
-  const response = await jiraFetch<{
-    comments?: { body?: unknown }[];
-  }>(
+/** The previous report's HTML, or null when there is none to read. */
+async function fetchLatestReportHtml(target: ReportTarget): Promise<string | null> {
+  const response = await jiraFetch<{ comments?: { renderedBody?: string }[] }>(
     `/rest/api/3/issue/${encodeURIComponent(target.reportIssueKey)}/comment` +
       `?orderBy=-created&maxResults=1&expand=renderedBody`,
   );
+  return response.comments?.[0]?.renderedBody ?? null;
+}
 
-  const latest = response.comments?.[0] as { renderedBody?: string } | undefined;
-  if (!latest?.renderedBody) return target.defaultNextTasks;
+/**
+ * Seed the "Next task" box and the carried-over percents from the previous
+ * report on that issue.
+ *
+ * Both come out of the same comment, so they are read in one request. A task
+ * still in progress is opened at the figure it was last reported at: yesterday
+ * said 70%, today starts at 70% for Bimo to raise to 80%, instead of snapping
+ * back to the status default.
+ */
+export async function fetchPreviousReport(
+  target: ReportTarget,
+): Promise<{ nextTasks: string[]; percents: Record<string, number> }> {
+  const html = await fetchLatestReportHtml(target);
+  if (!html) return { nextTasks: target.defaultNextTasks, percents: {} };
 
-  const parsed = parseNextTasks(latest.renderedBody);
-  return parsed.length > 0 ? parsed : target.defaultNextTasks;
+  const parsed = parseNextTasks(html);
+  return {
+    nextTasks: parsed.length > 0 ? parsed : target.defaultNextTasks,
+    percents: Object.fromEntries(parseTaskPercents(html)),
+  };
 }
 
 export function buildReport(input: ReportInput) {

@@ -39,6 +39,10 @@ const SUMI: Mention = {
   accountId: '70121:5b5e92a5-862c-4edc-994f-c02ab8a3280f',
   name: 'Sumi',
 };
+const MINJUN: Mention = {
+  accountId: '712020:9f629ab7-904b-49b4-95a8-a2aed75661a6',
+  name: 'Minjun',
+};
 
 export const REPORT_TARGETS: ReportTarget[] = [
   {
@@ -60,6 +64,17 @@ export const REPORT_TARGETS: ReportTarget[] = [
     reportIssueKey: 'PPP-308',
     mentions: [SUMI, RUBY],
     defaultNextTasks: ['Fix bug theo feedback (nếu có)', 'Sửa giao diện theo thiết kế mới'],
+  },
+  {
+    id: 'sportsrab',
+    label: 'SportsRab',
+    projectKey: 'SR',
+    reportIssueKey: 'PPP-351',
+    // Ruby first here, Sumi second — the reverse of TMS. Taken from the real
+    // comment history on PPP-351, not guessed from the other targets. Minjun
+    // was added by Bimo on 23/09/2026 and is not in that history.
+    mentions: [RUBY, SUMI, MINJUN],
+    defaultNextTasks: ['Ghép API theo thiết kế mới', 'Fix bug theo feedback (nếu có)'],
   },
 ];
 

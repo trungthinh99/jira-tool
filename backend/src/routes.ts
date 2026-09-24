@@ -8,7 +8,7 @@ import {
   fetchHandoverBoard,
   fetchInbox,
   fetchMentionableUsers,
-  fetchPreviousNextTasks,
+  fetchPreviousReport,
   fetchTransitions,
   pingSlack,
   postReport,
@@ -77,6 +77,7 @@ routes.get(
   }),
 );
 
+/** Seeds for a new report: last report's "Next task" lines and its percents. */
 routes.get(
   '/targets/:id/previous-next-tasks',
   handle(async (req, res) => {
@@ -85,7 +86,7 @@ routes.get(
       res.status(404).json({ error: 'Unknown report target.' });
       return;
     }
-    res.json({ nextTasks: await fetchPreviousNextTasks(target) });
+    res.json(await fetchPreviousReport(target));
   }),
 );
 

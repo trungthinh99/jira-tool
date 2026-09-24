@@ -6,8 +6,9 @@ Hai việc nó làm:
 
 1. **Thông báo** — liệt kê task được phân cho mình mà còn ở trạng thái `To Do`,
    nhóm theo nguồn (sub-task từ BE / improvement từ BA / bug từ Tester).
-2. **Báo cáo** — thống kê task đã đổi trạng thái trong ngày, dựng sẵn nội dung
-   báo cáo theo đúng mẫu nhà, rồi đăng thẳng thành comment lên issue báo cáo.
+2. **Báo cáo** — thống kê task đã đổi trạng thái trong ngày **cộng task đang
+   làm dở**, dựng sẵn nội dung báo cáo theo đúng mẫu nhà, rồi đăng thẳng thành
+   comment lên issue báo cáo.
 
 ## Kiến trúc
 
@@ -48,13 +49,14 @@ danh sách người được mention, và các dòng "Next task" mặc định.
 | --- | --- | --- | --- |
 | Hwashin ERP | `HWE` | `PPP-354` | @Ruby @sney |
 | TMS | `DT` | `PPP-308` | @Sumi @Ruby |
+| SportsRab | `SR` | `PPP-351` | @Ruby @Sumi @Minjun |
 
 Thêm dự án mới = thêm một entry vào mảng đó, không cần đụng frontend — UI đọc
 danh sách tab từ `GET /api/targets`.
 
 ## Mẫu báo cáo
 
-Khớp đúng định dạng đang dùng trên PPP-308 / PPP-354:
+Khớp đúng định dạng đang dùng trên PPP-308 / PPP-354 / PPP-351:
 
 ```
 *Report 18/09/2026
@@ -84,8 +86,8 @@ phải là node thật mang `accountId` thì Jira mới hiện đúng tên và g
 | GET | `/api/health` | Kiểm tra backend + site |
 | GET | `/api/targets` | Danh sách đích báo cáo cho UI |
 | GET | `/api/inbox` | Task `To Do` được phân cho mình |
-| GET | `/api/activity?date=YYYY-MM-DD` | Task đổi trạng thái trong ngày |
-| GET | `/api/targets/:id/previous-next-tasks` | "Next task" của báo cáo gần nhất |
+| GET | `/api/activity?date=YYYY-MM-DD` | Task đổi trạng thái trong ngày + task đang làm dở |
+| GET | `/api/targets/:id/previous-next-tasks` | "Next task" và % của báo cáo gần nhất |
 | POST | `/api/targets/:id/preview` | Dựng nội dung, chưa đăng |
 | POST | `/api/targets/:id/report` | Đăng comment báo cáo |
 | GET | `/api/issues/:key/transitions` | Các transition khả dụng |
