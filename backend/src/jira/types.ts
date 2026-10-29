@@ -40,7 +40,9 @@ export interface RawIssue {
         issuetype?: { name?: string };
       };
     };
-    reporter?: { displayName?: string };
+    // `accountId` only matters where the reporter is used as an assignee
+    // default; the board rows just print `displayName`.
+    reporter?: { displayName?: string; accountId?: string };
     assignee?: { displayName?: string } | null;
     created?: string;
     updated?: string;

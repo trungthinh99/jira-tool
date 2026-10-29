@@ -119,10 +119,200 @@ Hệ quả cho code — ba điều dễ làm sai:
   đã test pass là thông tin có ích.
 
   **Bẫy đi kèm, nguy hiểm hơn cả hiển thị:** các nút "Chọn nhanh" (Task BE /
-  Task FE / Tất cả) từng chọn trên danh sách đầy đủ, nên sẽ tick cả QA cũ đang
-  bị ẩn rồi "Chuyển N task" đổi trạng thái một task không ai thấy trên màn
-  hình. Mọi thao tác chọn và số đếm giờ dùng `visible` trong `ActionsPage` —
-  thêm thao tác ghi mới thì phải dùng danh sách đó, đừng dùng `issues`.
+  Task FE / Task QA / Tất cả) từng chọn trên danh sách đầy đủ, nên sẽ tick cả
+  QA cũ đang bị ẩn rồi "Chuyển N task" đổi trạng thái một task không ai thấy
+  trên màn hình. Mọi thao tác chọn và số đếm giờ dùng `visible` trong
+  `ActionsPage` — thêm thao tác ghi mới thì phải dùng danh sách đó, đừng dùng
+  `issues`.
+
+  Nút QA của **từng story** chỉ hiện khi story đó còn QA đang hiện, vì `roles`
+  tính từ `withoutStaleQa(story.items)`. Nhờ vậy nó không bao giờ tick trúng QA
+  cũ đã Done đang bị ẩn — chính cái bẫy ở trên.
+
+  **Hai nút "Improvement" và "Bug" tách riêng, đừng gộp lại.** Bug chạy
+  workflow khác (`TO FIX → FIXING`), nên tick lẫn hai loại thì dropdown rút
+  còn `Review`/`Done` — đo thật: Improvement 8 task ra đủ 4 trạng thái, Bug ra
+  `TO FIX / FIXING / Review / Done`, "Tất cả" 17 task chỉ còn 2. Gộp một nút
+  là vĩnh viễn rơi vào trường hợp cuối, mất `TO FIX` và `FIXING`.
+
+  **Chọn theo `taskSource()` trên `standalone`, KHÔNG theo
+  `taskRole() === 'other'`.** Hai thứ này hiện trùng nhau trên cả ba board (đã
+  tra: chỉ HWE-756 là role `other`, và nó đúng là Improvement), nhưng là hai
+  câu hỏi khác nhau. Sub-task BE/FE tiêu đề mẫu cũ không prefix (`[FE] Cắt
+  giao diện ...`, còn sống trên SR) cũng đọc ra role `other` — tick task của
+  Jame bằng nút mang tên "Improvement" rồi chuyển trạng thái hàng loạt là đúng
+  kiểu ghi nhầm màn này phải tránh.
+
+  Mỗi nút ẩn khi board không có loại đó: SportsRab ẩn cả hai, HWE và TMS hiện
+  mỗi nút Improvement (chưa board nào có Bug lúc kiểm — nhánh Bug đo bằng cách
+  chèn một Bug giả vào payload `handover`, chỉ đọc).
+
+### Gợi ý tiêu đề QA bằng AI của Jira
+
+Bấm `+ QA` trên một **Improvement/Bug** thì tool hỏi AI của Jira (chính cái
+chạy sau nút "Suggest" ở mục Subtasks) để lấy tiêu đề, rồi mới mở dialog.
+
+```
+POST /gateway/api/assist/api/ai/v2/ai-feature/jira/workbreakdown
+X-Experience-Id: issue-work-breakdown      ← thiếu là 400
+X-Product: jira-software
+body: {"ai_feature_input":{"issueKey":"DT-1264"}}
+```
+
+**Endpoint NỘI BỘ, không có tài liệu.** Atlassian không công bố API nào cho
+tính năng này: không có trong REST v3, không có trong danh sách tool của Rovo
+MCP, và chính ticket AI-8 "APIs for Atlassian Intelligence" của họ (mở
+12/2023, 136 vote) tới nay vẫn "Gathering Interest". Endpoint trên đọc được
+từ network của browser ngày 16/10/2026. Nó đổi hoặc biến mất lúc nào cũng
+được — **mọi lỗi phải rơi êm về tiêu đề mặc định**, đừng bao giờ để nó chặn
+nút `+ QA`.
+
+**May mắn lớn: nó nhận chính API token trong `backend/.env`.** Không cần
+browser, cookie, Playwright hay scrape DOM. Gọi thẳng từ backend như mọi
+endpoint Jira khác.
+
+Đo thật trên 12 Improvement — kết quả **không ổn định**, thiết kế phải chịu
+được điều đó:
+
+| Kết quả | Số lần |
+| --- | --- |
+| Có gợi ý QA dùng được | 4/12 |
+| Chỉ gợi ý việc dev | 4/12 |
+| Không gợi ý gì | 4/12 |
+
+- **6–10 giây mỗi lần.** Bimo chọn chờ AI rồi mới mở dialog, nên nút đổi nhãn
+  thành "Đang hỏi AI…" và khoá lại trong lúc chờ.
+- **Cùng một issue, hai lần ra hai tiêu đề khác nhau.** Đừng cache rồi tưởng
+  sai; nó vốn vậy.
+- **Không theo mẫu nhà.** Ra đủ kiểu `QA_Kiểm tra...`, `QA: Kiểm tra...`,
+  `[APP] QA kiểm tra...`, thiếu stamp. `stripPrefixes()` trong `suggest.ts`
+  bóc sạch rồi `seedTitle()` dựng lại thành `QA_YYMMDD: Test <nội dung>`.
+- **Dialog hiện nguyên văn câu AI trả về** ở dòng "AI gợi ý:" — tiêu đề là bản
+  diễn đạt lại, nên phải cho Bimo đối chiếu được với bản gốc.
+
+**Chỉ hỏi AI cho Improvement/Bug, KHÔNG hỏi cho Story.** Description của Story
+chồng nhiều khối `[Update N]` qua nhiều tháng, AI tóm nhầm vòng cũ; mà
+sub-task của Story vốn đã mang sẵn chữ để đặt tên. Đã đo: Story mở dialog
+trong 108ms, 0 lần gọi AI.
+
+**Vì sao không tự dựng tiêu đề từ summary?** Đã thử và đo: công thức "bỏ
+`[BO]` + ghép *Test giao diện*" chỉ khớp **7/92** task QA trong lịch sử. Lý do
+là tiêu đề QA thật mô tả *thay đổi cụ thể*, còn summary của parent chỉ là *tên
+màn hình* — thông tin đó nằm ở description.
+
+### Assignee mặc định là reporter — chỉ là mặc định
+
+`fetchReporter()` lấy người tạo Improvement làm assignee mặc định cho task QA.
+**Đừng khoá cứng**: đo 8 cặp QA↔parent gần nhất trên DT, Bimo giữ reporter 4
+lần và chọn người khác (Sumi, Luca) 4 lần. Dropdown vẫn đổi tự do.
+
+Bẫy: `users` là danh sách assignable trên **issue báo cáo PPP**, không đảm bảo
+chứa reporter của issue đang mở. Dialog tự chèn thêm một `<option>` cho
+reporter khi thiếu, nếu không select sẽ âm thầm rơi về "không giao cho ai"
+trong khi nhãn vẫn ghi tên người đó.
+
+### Badge đầu dòng: role trước, work type sau
+
+`rowBadge()` trong `utils.ts`. Sub-task hiện **vai bàn giao** (BE/FE/QA) vì đó
+mới là thông tin có ích — type của chúng luôn là "Sub-task". Dòng nào không
+đọc ra vai (Improvement, Bug) thì hiện **work type của Jira** thay vì `—`:
+trên Jira Bimo thấy mũi tên xanh "Improvement", mà tool lại hiện gạch ngang.
+
+**Không tốn request nào.** `issueType` đã nằm sẵn trong `ISSUE_FIELDS`, Jira
+trả về cùng payload JQL.
+
+**In thẳng tên Jira trả về, đừng map qua danh sách cứng.** Site này có nhiều
+type hơn menu "Change work type": đã tra `/rest/api/3/issuetype` ra Bug, Epic,
+Improvement, Meeting, New Feature, Research, Story, Task, Sub-task/Subtask,
+cộng bản tiếng Hàn `에픽` và `하위 작업`. Type lạ phải đọc ra chính nó, không
+rơi về `—`. `TYPE_TONE` chỉ tô màu vài loại hay gặp (Improvement xanh, Bug đỏ,
+Story xanh lá, Epic vàng), còn lại trung tính — đã kiểm với `Research` và
+`하위 작업`.
+
+### Tạo QA xong thì nhãn phải tắt ngay
+
+Bẫy index trễ (mục 4) áp cho **cả lệnh tạo**, không chỉ transition. Tạo QA
+xong gọi `load()` thì JQL chưa thấy sub-task mới, nên nhãn "chưa có QA" vẫn
+bám trên story/improvement vừa tạo — Bimo báo đúng lỗi này.
+
+Chữa cùng một kiểu với `justMoved` / `justAssigned`: `load()` nhận thêm
+`justCreated` và **chèn** issue mới vào danh sách nếu lần fetch đó chưa thấy
+nó. Tin được vì `createSubtask()` đọc lại issue bằng `GET /issue/{key}` —
+không qua search index. `onCreated` cũng `setIssues` ngay trước khi gọi
+`load()`, để nhãn tắt lúc bấm chứ không phải một request sau.
+
+Đo thật (giả POST, `handover` cố tình trả danh sách cũ): nhãn tắt sau 150ms và
+**vẫn tắt** sau khi fetch cũ về.
+
+**Sub-task của Improvement/Bug giờ có render.** Trước đây `standaloneKids` chỉ
+dùng để tính nhãn, không in ra dòng nào — nên tạo QA cho một Improvement xong
+thì task mới biến mất khỏi màn hình, nhìn như nút không ăn. Giờ chúng hiện
+thụt vào dưới chính Improvement đó.
+
+Kèm theo, **`visible` phải gồm cả các dòng con này** — đúng cái bẫy ở trên,
+chỉ ngược chiều: render ra mà không cho vào `visible` thì "Tất cả" đếm một
+đằng, màn hình hiện một nẻo. Đã đo: 15 dòng hiện / "Tất cả" tick 15 / badge
+15, "Task QA" tick đúng 7 QA.
+
+Số ở tiêu đề `Improvement / Bug · N` vẫn đếm riêng Improvement/Bug, không đếm
+QA con — tiêu đề gọi tên thứ mà section liệt kê.
+
+**Improvement/Bug có sub-task thì gập được**, dùng chung `collapsed` với story
+(key chính là key của issue). `renderRow` nhận `opts.fold` để vẽ mũi tên.
+
+- **Cột mũi tên có ở MỌI dòng**, chỗ nào không gập được thì là `<span>` rỗng
+  cùng bề rộng. Thiếu nó thì checkbox lệch cột, và có lúc dòng con còn nằm
+  trái hơn dòng cha — ngược hệ phân cấp. Đã đo: cha 530px, con 546px, và
+  sub-task của story cũng 546px nên hai loại con cùng một cột.
+- **`foldable` quyết định nút "Mở hết"/"Thu hết"**, gồm story + Improvement
+  **có con**. Improvement không con mà tính vào thì `allCollapsed` không bao
+  giờ true, nhãn kẹt ở "Thu hết" vĩnh viễn. Nút cũng đổi điều kiện hiện từ
+  `storyGroups.length > 1` sang `foldable.length > 1` — board TMS toàn
+  Improvement nên trước đây không có nút.
+- **Improvement KHÔNG gập sẵn lúc mở board**, khác story. `foldedFor` phải lọc
+  bỏ nhóm có parent là standalone, nếu không QA sub-task kéo Improvement vào
+  `grouped.stories` và cả section mở ra đã đóng sạch. Lý do: story giấu cả
+  chục dòng FE/BE, Improvement chỉ giấu một dòng QA.
+- Gập rồi thì "Chọn nhanh" vẫn tick task đang ẩn — giống hệt story gập lâu
+  nay, `visible` không xét `collapsed`. Gập là cho đỡ rối mắt, không phải để
+  loại khỏi phạm vi thao tác.
+
+### Nút copy tiêu đề
+
+Mỗi dòng story và mỗi dòng sub-task có nút `⧉` ngay **sau tiêu đề** (component
+`CopyTitle` trong `ActionsPage`), copy đúng phần tiêu đề — khác nút "Lấy link"
+ở Inbox vốn copy URL. Mờ đi cho tới khi rê chuột vào dòng, để danh sách vẫn
+đọc ra tiêu đề chứ không phải một cột nút.
+
+Hai điều đã vấp phải, đừng làm lại:
+
+- **Không lồng nút copy vào trong nút gập story.** Nested button là HTML sai,
+  và bấm copy sẽ gập story luôn. Nó là anh em đứng ngay sau nút gập.
+- **Nút gập story không được `flex-1`.** Để `flex-1` thì nút copy bị đẩy sang
+  tận mép phải cạnh badge, không còn nằm cạnh tiêu đề. Nút gập co theo nội
+  dung, một `<span className="flex-1" />` ăn hết chỗ trống thay nó.
+
+### Giao việc hàng loạt
+
+Cùng danh sách đã tick, nhưng là lệnh ghi khác: chọn người ở ô "Giao việc" rồi
+bấm "Giao N task". Dùng chính `users` mà màn này đã tải sẵn cho dialog QA
+(`GET /targets/:id/users`, tức `/user/assignable/search` trên issue báo cáo).
+
+- **Gọi `PUT /issue/{key}/assignee`, không phải sửa field.** Endpoint riêng này
+  chỉ đòi quyền "Assign issues"; sửa qua `fields.assignee` đòi thêm "Edit
+  issues" mà FE không chắc có trên task của người khác.
+- **`accountId: null` là "bỏ giao"**, khác hẳn "chưa chọn ai". Ô select dùng
+  sentinel `'-'` cho Bỏ giao và `''` cho chưa chọn; route bắt buộc phải có
+  field `accountId` (null cũng được) chứ không mặc định thành null, để một
+  request thiếu field không âm thầm gỡ assignee của 13 task.
+- **Cùng bẫy index trễ như transition.** Giao xong gọi lại `load()` thì Jira
+  vẫn trả assignee cũ, nên `justAssigned` vá lại cột người giao y như
+  `justMoved` vá status. Khác một điểm: giao việc **không** làm task rời board,
+  nên chỉ ghi đè field chứ không loại dòng.
+- **Banner kết quả dùng chung cho cả ba lệnh ghi** (chuyển / giao / tạo QA) nên
+  nó mang theo `verb`. Trước đây tạo QA xong cũng báo "Chuyển xong 1/1 task".
+
+Nút "Giao" bị khoá tới khi chọn cả task lẫn người — cả hai đều là ghi thật.
 
 Improvement (vd HWE-482) đi tắt: không có sub-task FE/BE, Bimo làm thẳng rồi tạo
 QA sub-task ngay dưới nó. Vì vậy màn Thao tác cho tạo QA trực tiếp trên
@@ -138,12 +328,25 @@ dự án, nhưng **mỗi dự án báo cáo riêng, mention người riêng**:
 
 | Dự án | Project key | Issue nhận báo cáo | Mention |
 | --- | --- | --- | --- |
-| Hwashin ERP | `HWE` | `PPP-354` | @Ruby @sney |
-| TMS | `DT` | `PPP-308` | @Sumi @Ruby |
-| SportsRab | `SR` | `PPP-351` | @Ruby @Sumi @Minjun |
+| Hwashin ERP | `HWE` | `PPP-341` | @Ruby @sney |
+| TMS | `DT` | `PPP-226` | @Luca @Ruby |
+| SportsRab | `SR` | `PPP-349` | @Ruby @Sumi @Minjun |
 
-**Thứ tự mention của SR ngược với TMS** (Ruby trước, Sumi sau). Lấy từ lịch sử
-comment thật trên PPP-351, không suy từ target khác — đừng "sửa cho nhất quán".
+**Mention của TMS đổi ngày 19/10/2026:** Bimo bỏ Sumi, thay bằng Luca, và giữ
+nguyên vị trí (Luca trước, Ruby sau). Chỉ đổi ở TMS — SportsRab vẫn mention
+Sumi.
+
+**Đích đã đổi ngày 28/09/2026.** Trước đó là `PPP-354` / `PPP-308` / `PPP-351`
+— các **sub-task `[Web] - ... Report`** của riêng Bimo. Giờ chuyển lên chính
+**task cha `[X] Prep for Dev`** (PPP-349 đúng là cha của PPP-351), nơi cả team
+báo cáo chung: Perry (mobile), Jame (BE), Joseph cùng post vào đó.
+
+Hệ quả quan trọng — xem mục 4, phần "đọc ngược báo cáo cũ": comment mới nhất
+trên các issue này **thường không phải của Bimo**. PPP-226 có 100 comment gần
+nhất không có cái nào của Bimo.
+
+**Thứ tự mention của SR là Ruby trước, Sumi sau.** Lấy từ lịch sử comment thật
+trên PPP-351, không suy từ target khác — đừng "sửa cho nhất quán".
 **Minjun** do Bimo thêm ngày 23/09/2026, không có trong lịch sử comment cũ.
 
 Post nhầm đích hoặc mention nhầm người là lỗi nghiệp vụ, không phải lỗi hiển
@@ -161,10 +364,17 @@ nên không cần sửa gì bên FE.
 | MOBI (Bimo) | `712020:3f2962d5-3b89-4885-985c-444b4cd4f5cc` | FE — chủ tool |
 | sney | `712020:d22b3123-52e3-46cb-b435-4b9a30fb166f` | BA/QA — mention ở báo cáo HWE |
 | Ruby | `712020:cc414e81-af9e-4033-8159-e7ed19785489` | mention ở **cả ba** báo cáo |
-| Sumi | `70121:5b5e92a5-862c-4edc-994f-c02ab8a3280f` | mention ở báo cáo TMS và SportsRab |
+| Sumi | `70121:5b5e92a5-862c-4edc-994f-c02ab8a3280f` | mention ở báo cáo SportsRab (TMS tới 19/10/2026) |
 | Minjun | `712020:9f629ab7-904b-49b4-95a8-a2aed75661a6` | mention ở báo cáo SportsRab |
+| Luca | `712020:7aa99717-ae01-4697-9022-1277d79bfa9c` | mention ở báo cáo TMS từ 19/10/2026 |
 
-(Vai trò cụ thể của Ruby và Sumi chưa được xác nhận — bảng này chỉ ghi chắc
+`user/search?query=Luca` trả **rỗng** với token của tool, dù tài khoản đang
+active. accountId của Luca được lấy từ assignee của các issue DT, rồi đối chiếu
+lại bằng `GET /user?accountId=` và `user/viewissue/search` trên PPP-226 (Luca
+xem được issue đó, nên mention sẽ bắn thông báo). Cần thêm người mới thì tra
+theo cách này, đừng kết luận "không có user".
+
+(Vai trò cụ thể của Ruby, Sumi và Luca chưa được xác nhận — bảng này chỉ ghi chắc
 chắn ai được mention ở đâu, theo lịch sử comment thật. Jame là BE, tạo các
 sub-task `FE_YYMMDD:`.)
 
@@ -304,6 +514,16 @@ Jira.
   trong bundle JS, và browser gọi thẳng `atlassian.net` thì vướng CORS. Thêm
   biến môi trường thì cập nhật luôn `.env.example`.
 
+- **Backend chỉ nghe `127.0.0.1`, cố ý không cho cấu hình.** Tool không có
+  đăng nhập, mọi lệnh ghi lên Jira/Slack đều mang tên Bimo. Trước 16/10/2026
+  `app.listen(port)` nghe mọi interface, và Windows Firewall có sẵn rule cho
+  `node.exe` trên profile Public — đo thật: `http://192.168.1.166:4180/api/targets`
+  trả **200** từ IP LAN công ty, tức đồng nghiệp nào cũng `curl` được lệnh đăng
+  báo cáo hay nhắn Slack. CORS không chặn được vì nó chỉ ràng buộc browser.
+  Vite cũng ghim `host: 'localhost'` vì proxy `/api` của nó sẽ mở lại đúng lỗ
+  này nếu ai đổi thành `true`. Proxy trỏ `127.0.0.1` chứ không `localhost` —
+  `localhost` có thể ra `::1`, nơi backend không còn nghe.
+
 - **Comment phải gửi dạng ADF**, không phải markdown hay HTML. Mention cần node
   thật mang `accountId` thì Jira mới hiện tên và bắn thông báo; viết `@sney`
   dạng text thì chỉ là chữ thường. Tool MCP `addOrEditJiraIssueComment` với
@@ -333,6 +553,18 @@ Jira.
   hôm qua báo 70% thì hôm nay mở ra 70% để Bimo sửa thành 80%, thay vì tụt về
   mặc định theo status. Dòng vừa Done hôm nay thì vẫn lấy `defaultPercent()`
   (100%), không đọc ngược.
+
+  **Chỉ đọc comment của chính Bimo.** Từ 28/09/2026 đích báo cáo là task chung
+  của cả team, nên comment mới nhất rất hay là của Perry hoặc Jame.
+  `fetchLatestReportHtml()` lọc theo `author.accountId` của token
+  (`fetchCurrentUser()`) rồi mới parse — nếu không, ô "Next task" của Bimo sẽ
+  mở ra với kế hoạch của người khác ("Upload bản build IOS lên Testflight") và
+  % carry-over lấy nhầm task của họ.
+
+  Đo thật lúc đổi: PPP-341 có Jame ở vị trí #2 và #3, PPP-349 có Perry và
+  Joseph ngay sau Bimo. Không tìm thấy comment nào của Bimo thì rơi về
+  `defaultNextTasks` — đó là trạng thái **bình thường**, không phải lỗi
+  (PPP-226 đúng như vậy).
 
   **Key lấy từ `href`, không phải từ text hiển thị.** Từ 21/09/2026 dòng báo
   cáo hiện tiêu đề chứ không hiện URL, nên key chỉ còn trong link. Bóc theo
@@ -513,16 +745,18 @@ Tính tới **21/09/2026**, tool đã dựng xong và chạy với dữ liệu J
 
 **CHƯA chạy thật — cần Bimo bấm thử:**
 
-- **Nút "Đăng báo cáo"** — sẽ post comment thật lên PPP-354 / PPP-308 /
-  PPP-351.
+- **Nút "Đăng báo cáo"** — sẽ post comment thật lên PPP-341 / PPP-226 /
+  PPP-349.
 - **Nút "Bắt đầu"** ở Inbox — sẽ đổi trạng thái task thật sang In Progress.
-- **Menu Thao tác** — nút "Chuyển N task" đổi trạng thái hàng loạt, nút "+ QA"
-  tạo sub-task thật. Phần đọc (`GET /targets/:id/handover`) đã kiểm trên dữ
+- **Menu Thao tác** — nút "Chuyển N task" đổi trạng thái hàng loạt, nút
+  **"Giao N task"** đổi assignee hàng loạt, nút "+ QA" tạo sub-task thật. Phần đọc (`GET /targets/:id/handover`) đã kiểm trên dữ
   liệu thật: 27 task chưa xong, gom đúng 5 Story, phân đúng 14 FE / 12 BE.
 
 Cả hai đều ghi lên Jira nên tôi không tự chạy. Code đã xong; nếu ADF có gì lệch
-mẫu thì sửa `adf.ts`. **Khi kiểm thử, đừng post thử lên PPP-354/PPP-308/PPP-351** — đó
-là issue báo cáo thật mà BA và PM đang đọc. Tạo issue nháp riêng để thử.
+mẫu thì sửa `adf.ts`. **Khi kiểm thử, đừng post thử lên PPP-341/PPP-226/PPP-349** — đó
+là issue báo cáo thật mà BA, PM **và cả team** đang đọc (càng không được post
+bừa vì giờ là task chung, không phải sub-task riêng của Bimo). Tạo issue nháp
+riêng để thử.
 
 ### Nguyên tắc: không tự ý ghi lên Jira
 

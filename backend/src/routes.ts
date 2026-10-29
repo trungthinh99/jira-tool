@@ -3,18 +3,21 @@ import { config, findTarget, REPORT_TARGETS, slackEnabled, type Mention } from '
 import {
   buildReport,
   createSubtask,
+  assignMany,
   fetchCurrentUser,
   fetchDayActivity,
   fetchHandoverBoard,
   fetchInbox,
   fetchMentionableUsers,
   fetchPreviousReport,
+  fetchReporter,
   fetchTransitions,
   pingSlack,
   postReport,
   transitionIssue,
   transitionMany,
 } from './jira/service.js';
+import { suggestQaTitle } from './jira/suggest.js';
 import type { ReportInput, TodayTaskLine } from './jira/adf.js';
 
 export const routes = Router();
@@ -135,6 +138,29 @@ routes.post(
   }),
 );
 
+/**
+ * Bulk assign. `accountId` is required but may be null, which unassigns — the
+ * distinction matters, so a missing field is an error rather than a silent
+ * "clear the assignee".
+ */
+routes.post(
+  '/issues/assign-many',
+  handle(async (req, res) => {
+    const body = req.body as { keys?: unknown; accountId?: unknown };
+    if (!Array.isArray(body?.keys) || body.keys.length === 0) {
+      res.status(400).json({ error: 'Body field "keys" must be a non-empty array.' });
+      return;
+    }
+    if (body.accountId !== null && typeof body.accountId !== 'string') {
+      res.status(400).json({ error: 'Body field "accountId" must be a string or null.' });
+      return;
+    }
+    const accountId = typeof body.accountId === 'string' ? body.accountId.trim() : null;
+    const keys = body.keys.map((key) => String(key).trim()).filter(Boolean);
+    res.json({ results: await assignMany(keys, accountId || null) });
+  }),
+);
+
 routes.post(
   '/issues/:key/subtasks',
   handle(async (req, res) => {
@@ -151,6 +177,29 @@ routes.post(
       ...(assigneeAccountId ? { assigneeAccountId } : {}),
     });
     res.json({ issue });
+  }),
+);
+
+/**
+ * What to seed the "create QA sub-task" dialog with.
+ *
+ * Two things at once so the dialog waits on one round trip rather than two:
+ * the AI's suggested wording (often absent — see `suggestQaTitle`) and the
+ * issue's reporter, used as the assignee default.
+ *
+ * Never fails the request over the AI: a missing suggestion is the normal case
+ * and the dialog has its own default title to fall back on. The reporter is
+ * treated the same way, so one broken lookup cannot block creating a QA task.
+ */
+routes.get(
+  '/issues/:key/qa-seed',
+  handle(async (req, res) => {
+    const key = String(req.params['key']);
+    const [suggestion, reporter] = await Promise.all([
+      suggestQaTitle(key).catch(() => null),
+      fetchReporter(key).catch(() => null),
+    ]);
+    res.json({ suggestion, reporter });
   }),
 );
 

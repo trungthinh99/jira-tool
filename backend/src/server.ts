@@ -44,8 +44,8 @@ app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
   res.status(500).json({ error: message });
 });
 
-const server = app.listen(config.port, () => {
-  console.log(`jira-tool backend on http://localhost:${config.port}`);
+const server = app.listen(config.port, config.host, () => {
+  console.log(`jira-tool backend on http://${config.host}:${config.port}`);
   console.log(`  Jira site : ${config.jira.site}`);
   console.log(`  Account   : ${config.jira.email}`);
   console.log(`  CORS      : ${config.corsOrigins.join(', ')}`);

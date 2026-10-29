@@ -5,10 +5,15 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5180,
+    // Pinned so nobody "fixes" it to `true`: the proxy below would then hand
+    // the whole API to the office LAN.
+    host: 'localhost',
     // The backend holds the Jira token; the browser only ever talks to /api.
     proxy: {
       '/api': {
-        target: 'http://localhost:4180',
+        // Not `localhost`: it can resolve to ::1, where the backend no longer
+        // listens.
+        target: 'http://127.0.0.1:4180',
         changeOrigin: true,
       },
     },

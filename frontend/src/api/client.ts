@@ -3,6 +3,7 @@ import type {
   IssueSummary,
   JiraUser,
   PostedReport,
+  QaSeed,
   ReportPayload,
   ReportTarget,
   SlackConfig,
@@ -84,6 +85,20 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ keys, toStatus }),
     }),
+
+  /** `accountId: null` unassigns. */
+  assignMany: (keys: string[], accountId: string | null) =>
+    request<{ results: BulkResult[] }>('/issues/assign-many', {
+      method: 'POST',
+      body: JSON.stringify({ keys, accountId }),
+    }),
+
+  /**
+   * What to prefill the QA dialog with. Slow on purpose — it waits on Jira's
+   * AI (6–10s) — and both fields can come back null.
+   */
+  qaSeed: (issueKey: string) =>
+    request<QaSeed>(`/issues/${encodeURIComponent(issueKey)}/qa-seed`),
 
   createSubtask: (parentKey: string, summary: string, assigneeAccountId?: string) =>
     request<{ issue: IssueSummary }>(

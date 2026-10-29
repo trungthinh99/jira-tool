@@ -83,6 +83,26 @@ export const ROLE_LABEL: Record<TaskRole, string> = {
   other: '—',
 };
 
+/**
+ * What the row's badge should say.
+ *
+ * Role first, because on a sub-task the handover side (BE/FE/QA) is the useful
+ * fact and the type is always "Sub-task". An improvement or bug carries no
+ * prefix, so role reads `other` and the badge fell back to `—`, hiding what
+ * Jira itself shows as the work type. Those rows now show the type instead.
+ *
+ * `issueType` comes straight from Jira in the payload already — no extra
+ * request. The name is printed as given rather than mapped through a fixed
+ * list: this site has more types than the create menu offers (Meeting,
+ * Research, New Feature, and Korean `에픽` / `하위 작업`), and an unknown one
+ * should read as itself, not as `—`.
+ */
+export function rowBadge(issue: IssueSummary): { label: string; type: boolean } {
+  const role = taskRole(issue);
+  if (role !== 'other') return { label: ROLE_LABEL[role], type: false };
+  return { label: issue.issueType || '—', type: true };
+}
+
 /** `YYMMDD` for today — the date stamp used in `QA_YYMMDD:` titles. */
 export function todayStamp(date = new Date()): string {
   const year = String(date.getFullYear()).slice(-2);

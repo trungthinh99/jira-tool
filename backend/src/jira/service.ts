@@ -92,8 +92,8 @@ async function searchAll(jql: string, maxPages = 5): Promise<IssueSummary[]> {
  */
 export async function fetchInbox(): Promise<IssueSummary[]> {
   // Scoped to the configured projects. Widening the query surfaced the report
-  // issues themselves (PPP-354, PPP-308 are assigned to the FE and sit at In
-  // Progress permanently) plus unrelated projects — none of that is work to do.
+  // issues themselves (the PPP report issues sit at In Progress permanently)
+  // plus unrelated projects — none of that is work to do.
   const projects = REPORT_TARGETS.map((t) => `"${t.projectKey}"`).join(', ');
   const mine = await searchAll(
     `project IN (${projects}) AND assignee = currentUser() ` +
@@ -163,6 +163,23 @@ export async function fetchCurrentUser(): Promise<JiraUser> {
     accountId: raw.accountId ?? '',
     displayName: raw.displayName ?? '',
   };
+}
+
+/**
+ * Who raised an issue.
+ *
+ * Used to seed the assignee when creating a QA sub-task under an improvement:
+ * the person who asked for the change is usually the one who should verify it.
+ * Only a default, never enforced — across the eight most recent QA sub-tasks on
+ * DT, Bimo picked the reporter four times and someone else the other four.
+ */
+export async function fetchReporter(issueKey: string): Promise<JiraUser | null> {
+  const raw = await jiraFetch<RawIssue>(
+    `/rest/api/3/issue/${encodeURIComponent(issueKey)}?fields=reporter`,
+  );
+  const reporter = raw.fields?.reporter;
+  if (!reporter?.accountId) return null;
+  return { accountId: reporter.accountId, displayName: reporter.displayName ?? '' };
 }
 
 /** Cached user list, keyed by the issue it was looked up against. */
@@ -379,6 +396,51 @@ export async function transitionMany(
   return results;
 }
 
+/**
+ * Hand several issues to one person.
+ *
+ * Same shape as `transitionMany` on purpose: sequential, and a failure on one
+ * issue does not stop the rest. Jira rejects an assignee who lacks permission
+ * on that project, so a mixed board can legitimately half-succeed.
+ *
+ * `accountId` of `null` clears the assignee — Jira's own "Unassigned".
+ */
+export async function assignMany(
+  keys: string[],
+  accountId: string | null,
+): Promise<BulkResult[]> {
+  const results: BulkResult[] = [];
+  for (const key of keys) {
+    try {
+      await assignIssue(key, accountId);
+      results.push({ key, ok: true });
+    } catch (caught) {
+      results.push({
+        key,
+        ok: false,
+        error: caught instanceof Error ? caught.message : 'Lỗi không xác định.',
+      });
+    }
+  }
+  return results;
+}
+
+/**
+ * Set one issue's assignee.
+ *
+ * Uses the dedicated `/assignee` endpoint rather than a field edit: it is the
+ * one Jira permits with only "Assign issues", without needing "Edit issues".
+ */
+export async function assignIssue(
+  issueKey: string,
+  accountId: string | null,
+): Promise<void> {
+  await jiraFetch(`/rest/api/3/issue/${encodeURIComponent(issueKey)}/assignee`, {
+    method: 'PUT',
+    body: { accountId },
+  });
+}
+
 export async function fetchTransitions(issueKey: string): Promise<TransitionOption[]> {
   const response = await jiraFetch<{
     transitions?: { id: string; name: string; to?: { name?: string } }[];
@@ -413,13 +475,36 @@ export async function transitionIssue(issueKey: string, toStatus: string): Promi
   });
 }
 
-/** The previous report's HTML, or null when there is none to read. */
+/**
+ * The HTML of Bimo's own latest report on that issue, or null when there is
+ * none to read.
+ *
+ * Author-filtered on purpose. Since 28/09/2026 the targets are the shared
+ * `[X] Prep for Dev` tasks, where BE and mobile report too — PPP-226 had eight
+ * consecutive comments from Perry and Jame and none from Bimo. Taking simply
+ * the newest comment would seed the "Next task" box with a colleague's plan
+ * ("Upload bản build IOS lên Testflight") and carry over their percents.
+ *
+ * Scans a page of recent comments rather than just one, because several people
+ * report within the same hour every evening. `orderBy=-created` is newest-first
+ * (verified against PPP-226), so the first match is the most recent one.
+ *
+ * No match is normal, not an error: Bimo had never posted on PPP-226 when the
+ * targets moved there. The caller falls back to the target's default lines.
+ */
 async function fetchLatestReportHtml(target: ReportTarget): Promise<string | null> {
-  const response = await jiraFetch<{ comments?: { renderedBody?: string }[] }>(
+  const me = await fetchCurrentUser();
+  const response = await jiraFetch<{
+    comments?: { renderedBody?: string; author?: { accountId?: string } }[];
+  }>(
     `/rest/api/3/issue/${encodeURIComponent(target.reportIssueKey)}/comment` +
-      `?orderBy=-created&maxResults=1&expand=renderedBody`,
+      `?orderBy=-created&maxResults=50&expand=renderedBody`,
   );
-  return response.comments?.[0]?.renderedBody ?? null;
+
+  const mine = (response.comments ?? []).find(
+    (comment) => comment.author?.accountId === me.accountId,
+  );
+  return mine?.renderedBody ?? null;
 }
 
 /**

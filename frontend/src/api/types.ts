@@ -58,6 +58,20 @@ export interface JiraUser {
   displayName: string;
 }
 
+/**
+ * Prefill for the QA dialog. Both fields are nullable: Jira's AI often has
+ * nothing to suggest, and the reporter lookup is allowed to fail quietly.
+ */
+export interface QaSeed {
+  suggestion: {
+    /** Work description with every prefix stripped — goes after "Test ". */
+    body: string;
+    /** The AI's own line, shown so its wording can be judged. */
+    raw: string;
+  } | null;
+  reporter: JiraUser | null;
+}
+
 /** Outcome of one issue in a bulk transition. */
 export interface BulkResult {
   key: string;

@@ -47,16 +47,16 @@ danh sách người được mention, và các dòng "Next task" mặc định.
 
 | Dự án | Project | Đăng báo cáo vào | Mention |
 | --- | --- | --- | --- |
-| Hwashin ERP | `HWE` | `PPP-354` | @Ruby @sney |
-| TMS | `DT` | `PPP-308` | @Sumi @Ruby |
-| SportsRab | `SR` | `PPP-351` | @Ruby @Sumi @Minjun |
+| Hwashin ERP | `HWE` | `PPP-341` | @Ruby @sney |
+| TMS | `DT` | `PPP-226` | @Luca @Ruby |
+| SportsRab | `SR` | `PPP-349` | @Ruby @Sumi @Minjun |
 
 Thêm dự án mới = thêm một entry vào mảng đó, không cần đụng frontend — UI đọc
 danh sách tab từ `GET /api/targets`.
 
 ## Mẫu báo cáo
 
-Khớp đúng định dạng đang dùng trên PPP-308 / PPP-354 / PPP-351:
+Khớp đúng định dạng đang dùng trên PPP-226 / PPP-341 / PPP-349:
 
 ```
 *Report 18/09/2026
@@ -92,6 +92,9 @@ phải là node thật mang `accountId` thì Jira mới hiện đúng tên và g
 | POST | `/api/targets/:id/report` | Đăng comment báo cáo |
 | GET | `/api/issues/:key/transitions` | Các transition khả dụng |
 | POST | `/api/issues/:key/transition` | Chuyển trạng thái (theo tên, không theo id) |
+| POST | `/api/issues/transition-many` | Chuyển trạng thái hàng loạt |
+| POST | `/api/issues/assign-many` | Giao hàng loạt cho một người (`accountId: null` = bỏ giao) |
+| GET | `/api/issues/:key/qa-seed` | Gợi ý tiêu đề QA từ AI của Jira + reporter (chậm 6–10s, có thể trả null) |
 
 ## Ghi chú
 
