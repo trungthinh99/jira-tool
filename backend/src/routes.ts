@@ -11,6 +11,7 @@ import {
   fetchMentionableUsers,
   fetchPreviousReport,
   fetchReporter,
+  fetchStoryHeadings,
   fetchTransitions,
   pingSlack,
   postReport,
@@ -19,6 +20,7 @@ import {
 } from './jira/service.js';
 import { suggestQaTitle } from './jira/suggest.js';
 import type { ReportInput, TodayTaskLine } from './jira/adf.js';
+import { reactToSubtaskMessages } from './slack/client.js';
 
 export const routes = Router();
 
@@ -203,6 +205,26 @@ routes.get(
   }),
 );
 
+/**
+ * Every `[New]` / `[Update N]` heading in a story's description.
+ *
+ * Kept apart from `qa-seed` on purpose: a story never asks the AI (its
+ * sub-tasks already carry wording to name a QA from, and its description stacks
+ * months of `[Update N]` blocks the AI summarises the wrong one of), so routing
+ * it through that endpoint would buy a 6–10s wait for an answer it discards.
+ * This is one small read instead.
+ *
+ * Answers an empty list rather than 404 when there is no heading — six of the
+ * seventeen open stories have none, which is ordinary.
+ */
+routes.get(
+  '/issues/:key/story-headings',
+  handle(async (req, res) => {
+    const key = String(req.params['key']);
+    res.json({ headings: await fetchStoryHeadings(key).catch(() => []) });
+  }),
+);
+
 routes.get(
   '/issues/:key/transitions',
   handle(async (req, res) => {
@@ -347,5 +369,19 @@ routes.post(
   '/slack/ping',
   handle(async (_req, res) => {
     res.json({ slack: await pingSlack() });
+  }),
+);
+
+/**
+ * React to Jame's recent "em đã tạo sub-task" messages.
+ *
+ * A write to Slack, but a reversible one — and unlike the report ping it reads
+ * the channel first, so it needs scopes beyond `chat:write`. A missing scope
+ * surfaces as a plain error naming what to add.
+ */
+routes.post(
+  '/slack/react',
+  handle(async (_req, res) => {
+    res.json({ result: await reactToSubtaskMessages() });
   }),
 );

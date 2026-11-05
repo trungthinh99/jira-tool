@@ -106,3 +106,29 @@ export interface TransitionOption {
   name: string;
   to: string;
 }
+
+/**
+ * The `[New]` / `[Update N]` heading opening a story's description.
+ *
+ * The BA writes one at the top of every story, in red: `[New] 02/11/2026` for a
+ * story just written, `[Update 12] 29/10/2026` for each revision. It is how a
+ * QA task gets named for a story the FE-task prefill cannot cover.
+ */
+export interface StoryHeading {
+  /** `YYMMDD`, from the heading's `DD/MM/YYYY`. */
+  stamp: string;
+  /** The update number, or null for a `[New]` story. */
+  update: number | null;
+}
+
+/**
+ * Outcome of reacting to Jame's sub-task messages on Slack.
+ *
+ * Counts rather than a list: the point is "done, N answered", and the messages
+ * themselves live in Slack where they are already visible.
+ */
+export interface SlackReact {
+  reacted: number;
+  skipped: number;
+  errors: string[];
+}

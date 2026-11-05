@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { api } from '../api/client';
 import type { BulkResult, IssueSummary, JiraUser, ReportTarget } from '../api/types';
 import {
@@ -15,15 +16,30 @@ import {
   cn,
   copyText,
   groupProjectInbox,
+  handoverRounds,
+  lastFeTask,
   needsQa,
   qaStamp,
+  qaTitleFromFeTask,
   rowBadge,
   taskRole,
   taskSource,
   withoutStaleQa,
 } from '../utils';
 import type { TaskRole, TaskSource } from '../utils';
-import { CreateQaDialog, type QaParent } from './CreateQaDialog';
+import { CreateQaDialog, type QaParent, type QaRound } from './CreateQaDialog';
+
+/** Where an FE task goes when it is handed to QA — step 5 of the flow. */
+const REVIEW = 'Review';
+
+/** Where a BE sub-task goes once the FE has checked it — step 4 of the flow. */
+const DONE = 'Done';
+
+/** Where an FE sub-task starts once its BE side is cleared — step 4 as well. */
+const IN_PROGRESS = 'In Progress';
+
+/** Where an FE sub-task sits before it is picked up. */
+const TO_DO = 'To Do';
 
 /**
  * Statuses each kind of issue can be pushed to, in workflow order.
@@ -100,6 +116,262 @@ function CopyTitle({ text, onFail }: { text: string; onFail: () => void }) {
 }
 
 /**
+ * The prompt menu's two choices, built from one story.
+ *
+ * Both are prompts for an AI agent, not for Jira — nothing here writes
+ * anything, so there is no confirm step and no busy state. They exist because
+ * the two tasks that open a story's work are typed almost identically every
+ * time, differing only in the story link.
+ */
+function reportImagePrompt(storyUrl: string): string {
+  // "In Progress", not "To Do": the screenshots go on the work being done now,
+  // and by the time there is something to show, step 4 has already moved those
+  // sub-tasks off To Do.
+  return `Comment hình ảnh báo cáo vào các task FE đang In Progress trong ${storyUrl}`;
+}
+
+function integratePrompt(storyUrl: string, screen: string, figma: string): string {
+  const name = screen.trim();
+  const link = figma.trim();
+
+  // Neither field filled means there is no screen to name and no design to
+  // point at, so the cutting sentence has nothing to say. That case is a plain
+  // "follow the documents" instruction instead of a sentence with two holes in
+  // it.
+  if (!name && !link) {
+    return (
+      `User story và tài liệu API (trong comment) tại ${storyUrl}. ` +
+      'Hãy thực hiện cập nhật theo các tài liệu được cung cấp đi'
+    );
+  }
+
+  // "màn hình" is always in the sentence; the field only names which one. It
+  // used to be the fallback for an empty field, which left `cho S/N입력 này`
+  // once a name was given — a sentence missing its noun.
+  return (
+    `User story và tài liệu API (trong comment) tại ${storyUrl}. ` +
+    `Hãy cắt giao diện và ghép api cho màn hình${name ? ` ${name}` : ''} này: ${link}`
+  );
+}
+
+/** A small copy button that confirms in place, like `CopyTitle`. */
+function CopyButton({
+  text,
+  label = 'Copy nội dung',
+  onFail,
+}: {
+  text: string;
+  label?: string;
+  onFail: () => void;
+}) {
+  const [done, setDone] = useState(false);
+
+  const copy = async () => {
+    if (!(await copyText(text))) {
+      onFail();
+      return;
+    }
+    setDone(true);
+    window.setTimeout(() => setDone(false), 1200);
+  };
+
+  return (
+    <Button size="sm" variant={done ? 'ghost' : 'primary'} onClick={() => void copy()}>
+      {done ? '✓ Đã copy' : label}
+    </Button>
+  );
+}
+
+/**
+ * The two-item menu behind "Lấy prompt", anchored to the button that opened it.
+ *
+ * Absolutely positioned inside the header row rather than rendered as a
+ * centred modal: it is a pick between two things, and the click that opens it
+ * is already on the story it applies to — moving the eye to the middle of the
+ * screen to choose would lose that connection.
+ */
+function PromptMenu({
+  onPickReport,
+  onPickIntegrate,
+  onClose,
+}: {
+  onPickReport: () => void;
+  onPickIntegrate: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <>
+      {/* Catches the next click anywhere so the menu closes like a real
+          popover. Transparent, and below the menu itself. */}
+      <div className="fixed inset-0 z-30" onMouseDown={onClose} />
+      <div className="absolute right-0 top-full z-40 mt-1 w-56 overflow-hidden rounded border border-line bg-surface shadow-xl shadow-black/50">
+        <button
+          onClick={onPickReport}
+          className="block w-full px-3 py-2 text-left text-xs text-ink transition hover:bg-raised"
+        >
+          Báo cáo hình ảnh
+        </button>
+        <button
+          onClick={onPickIntegrate}
+          className="block w-full border-t border-line px-3 py-2 text-left text-xs text-ink transition hover:bg-raised"
+        >
+          Intergrate giao diện
+        </button>
+      </div>
+    </>
+  );
+}
+
+/**
+ * The "Intergrate giao diện" dialog: two fields and the prompt they compose.
+ *
+ * The text is shown rather than copied straight out because both inputs are
+ * free text — the Figma link in particular is pasted from elsewhere, and
+ * seeing the finished sentence is the only check that it landed in the right
+ * place. It stays editable for the same reason.
+ */
+function IntegrateDialog({
+  storyKey,
+  storyUrl,
+  onClose,
+  onFail,
+}: {
+  storyKey: string;
+  storyUrl: string;
+  onClose: () => void;
+  onFail: () => void;
+}) {
+  const [figma, setFigma] = useState('');
+  const [screen, setScreen] = useState('');
+  /**
+   * The prompt as typed, once it has been touched by hand.
+   *
+   * Null means "still following the two fields". After an edit the text is the
+   * user's, so changing a field no longer rebuilds over it — the same rule as
+   * the QA dialog's "Theo task FE cuối": only untouched text is replaced. The
+   * fields are the quick way in, not the only way, and silently discarding a
+   * reworded sentence is not undoable.
+   */
+  const [edited, setEdited] = useState<string | null>(null);
+  const built = integratePrompt(storyUrl, screen, figma);
+  const text = edited ?? built;
+
+  return (
+    <div
+      className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="w-full max-w-lg rounded-lg border border-line bg-surface shadow-xl shadow-black/50">
+        <header className="border-b border-line px-4 py-3">
+          <h2 className="text-sm font-semibold">Intergrate giao diện</h2>
+          <p className="mt-0.5 text-xs text-muted">
+            Prompt cho <span className="font-mono">{storyKey}</span>
+          </p>
+        </header>
+
+        <div className="space-y-3 p-4">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-muted">Link figma</label>
+            <input
+              autoFocus
+              value={figma}
+              onChange={(event) => setFigma(event.target.value)}
+              placeholder="https://figma.com/..."
+              className="w-full rounded border border-line bg-raised p-2.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-muted">Màn hình</label>
+            <input
+              value={screen}
+              onChange={(event) => setScreen(event.target.value)}
+              placeholder="màn hình"
+              className="w-full rounded border border-line bg-raised p-2.5 text-sm"
+            />
+          </div>
+          <div>
+            <label className="mb-1 flex items-center gap-1.5 text-xs font-medium text-muted">
+              Nội dung
+              {edited !== null ? (
+                <button
+                  type="button"
+                  onClick={() => setEdited(null)}
+                  className="font-normal text-brand hover:underline"
+                >
+                  (đã sửa tay — dựng lại)
+                </button>
+              ) : null}
+            </label>
+            <textarea
+              value={text}
+              onChange={(event) => setEdited(event.target.value)}
+              rows={4}
+              className="w-full resize-y rounded border border-line bg-raised p-2.5 font-mono text-xs leading-relaxed"
+            />
+          </div>
+        </div>
+
+        <footer className="flex justify-end gap-2 border-t border-line px-4 py-3">
+          <Button variant="ghost" onClick={onClose}>
+            Đóng
+          </Button>
+          <CopyButton text={text} onFail={onFail} />
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A yes/no step in front of a write that cannot be undone from here.
+ *
+ * The one-click BE button is the reason it exists: every other bulk write on
+ * this page is reached by ticking rows first, which is itself a confirmation of
+ * what will move. A single click that closes several of Jame's sub-tasks has no
+ * such step, and the keys are listed so a misclick on the wrong story's row is
+ * visible before it happens.
+ */
+function ConfirmDialog({
+  title,
+  detail,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  title: string;
+  detail: ReactNode;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) onCancel();
+      }}
+    >
+      <div className="w-full max-w-sm rounded-lg border border-line bg-surface shadow-xl shadow-black/50">
+        <header className="border-b border-line px-4 py-3">
+          <h2 className="text-sm font-semibold">{title}</h2>
+        </header>
+        <div className="px-4 py-3 text-xs text-muted">{detail}</div>
+        <footer className="flex justify-end gap-2 border-t border-line px-4 py-3">
+          <Button variant="ghost" onClick={onCancel} disabled={busy}>
+            Huỷ
+          </Button>
+          <Button variant="primary" onClick={onConfirm} disabled={busy}>
+            {busy ? 'Đang chuyển…' : 'Chuyển'}
+          </Button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Sentinel for "bỏ giao" in the assignee dropdown.
  *
  * Not `''`: that is the placeholder meaning nothing has been picked, and
@@ -160,11 +432,38 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
   const [qaParent, setQaParent] = useState<QaParent | null>(null);
   /** Issue key whose QA dialog is waiting on Jira's AI, so the button can say so. */
   const [qaSeeding, setQaSeeding] = useState<string | null>(null);
+  /** Story key whose "Lấy prompt" menu is open, if any. */
+  const [promptFor, setPromptFor] = useState<string | null>(null);
+  /** Story whose prompt was just copied, so the row can say so briefly. */
+  const [copiedPrompt, setCopiedPrompt] = useState<string | null>(null);
+  /** Story the "Intergrate giao diện" dialog is composing a prompt for. */
+  const [integrateFor, setIntegrateFor] = useState<{ key: string; url: string } | null>(null);
+  /**
+   * The one-click role move waiting on its confirm, if any.
+   *
+   * `groups` rather than one list because "BE & FE" moves two roles to two
+   * different statuses in the same action — step 4 of the flow in one press.
+   */
+  const [roleMove, setRoleMove] = useState<{
+    parentKey: string;
+    title: string;
+    groups: { role: 'BE' | 'FE'; keys: string[]; toStatus: string }[];
+  } | null>(null);
 
   /** Which project has already had its stories folded for the user. */
   const foldedFor = useRef<string | null>(null);
 
   const active = targets.find((target) => target.id === activeId) ?? targets[0];
+
+  /**
+   * A story's own Jira link, derived from the target's report issue URL.
+   *
+   * The handover payload carries a `url` per sub-task but none for the story
+   * itself, and the site host is not otherwise known to the frontend — the
+   * same derivation the inbox and the report rows already use.
+   */
+  const storyUrl = (key: string) =>
+    `${active?.reportIssueUrl.split('/browse/')[0] ?? ''}/browse/${key}`;
 
   /**
    * `afterWrite` marks the reload that follows a bulk move or a QA creation:
@@ -506,6 +805,59 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
   };
 
   /**
+   * Move one story's BE or FE sub-tasks in a single click — step 4 of the flow.
+   *
+   * Both halves of that step have exactly one possible destination: the BE work
+   * the FE just checked goes to Done, and the FE work it unblocks goes to In
+   * Progress. Reaching either meant ticking every row of that role, picking the
+   * status, pressing transition — three steps for a decision with one answer,
+   * repeated per story. The buttons on the story header do all of it, and
+   * `ConfirmDialog` stands in for the ticking as the moment to notice the wrong
+   * story.
+   *
+   * Shares `run`'s stale-index handling rather than reimplementing it: the
+   * reload after a write reads a search index that has not caught up, so the
+   * keys just moved are passed as `justMoved` and trusted over the payload.
+   */
+  const moveRoleTasks = async (groups: { keys: string[]; toStatus: string }[]) => {
+    setBusy(true);
+    setError(null);
+    try {
+      // One request per destination — "BE & FE" sends two, since the two roles
+      // end up in different statuses. Serial, like every other write here, and
+      // the results are pooled so the banner and the reload each happen once
+      // rather than flickering twice.
+      const outcome: BulkResult[] = [];
+      const moved = new Map<string, string>();
+      for (const group of groups) {
+        if (group.keys.length === 0) continue;
+        const { results } = await api.transitionMany(group.keys, group.toStatus);
+        outcome.push(...results);
+        for (const result of results) {
+          if (result.ok) moved.set(result.key, group.toStatus);
+        }
+      }
+      setResults({ verb: 'Chuyển', items: outcome });
+      // Dropping the selection matters for Done: that task leaves the board, and
+      // a key left ticked would ride along on the next transition. Harmless for
+      // In Progress, where the row stays — but a ticked row the user never
+      // ticked is its own surprise, so both are cleared.
+      setSelected((current) => {
+        const next = new Set(current);
+        for (const [key] of moved) next.delete(key);
+        return next;
+      });
+      setRoleMove(null);
+      if (active) await load(active.id, { afterWrite: true, justMoved: moved });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Không chuyển được trạng thái.');
+      setRoleMove(null);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
    * Hand every ticked task to one person.
    *
    * No `justMoved` counterpart to the transition flow: assigning never takes a
@@ -554,9 +906,69 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
    * it always did. Measured on 12 real improvements, 8 produced no usable QA
    * suggestion at all, so this path is ordinary, not exceptional.
    */
+  /**
+   * The `feTask` prefill, when this round has exactly one FE sub-task.
+   *
+   * Read here rather than in the dialog because only this page holds the
+   * siblings — the dialog is given a parent, not a family.
+   */
+  const feSeed = (siblings: readonly IssueSummary[], stamp: string): QaRound['feTask'] => {
+    const fe = lastFeTask(siblings);
+    if (!fe) return undefined;
+    const qaTitle = qaTitleFromFeTask(fe.summary, stamp);
+    if (!qaTitle) return undefined;
+    return { key: fe.key, summary: fe.summary, qaTitle };
+  };
+
+  /**
+   * Every round the story can have a QA created for, for the dialog's picker.
+   *
+   * A story is handed over in batches — DT-198 carries `261028`, `261030` and
+   * `261102` at once — and each batch needs its own QA. Without this the
+   * header's button could only ever reach the newest.
+   *
+   * A round's FE title is only offered when that round has exactly one FE
+   * task; with several there is no single title to copy.
+   */
+  const roundsFor = (siblings: readonly IssueSummary[]): QaRound[] =>
+    handoverRounds(siblings).map((item) => {
+      const title =
+        item.feTasks.length === 1 && item.feTasks[0]
+          ? qaTitleFromFeTask(item.feTasks[0].summary, item.stamp)
+          : null;
+      const only = item.feTasks[0];
+      return {
+        stamp: item.stamp,
+        feCount: item.feTasks.length,
+        hasQa: item.hasQa,
+        // Already in Review? Then there is nothing to move — re-running the
+        // dialog should not fire a transition that changes nothing.
+        fePending: item.feTasks
+          .filter((fe) => fe.status !== REVIEW)
+          .map((fe) => ({ key: fe.key, status: fe.status })),
+        ...(title && only ? { feTask: { key: only.key, summary: only.summary, qaTitle: title } } : {}),
+      };
+    });
+
   const openQaDialog = async (parent: QaParent, askAi: boolean) => {
+    // `onCreated` accumulates into the banner so a multi-round create reports
+    // every sub-task at once; clearing here keeps the previous story's results
+    // from being counted into this one's.
+    setResults(null);
     if (!askAi) {
-      setQaParent(parent);
+      // A story asks for its description headings instead of the AI. One small
+      // read, so the button is held only briefly — nothing like the 6–10s the
+      // AI costs. A failure is normal (six open stories have no heading) and
+      // leaves the generic title in place, so it never blocks the dialog.
+      setQaSeeding(parent.key);
+      try {
+        const { headings } = await api.storyHeadings(parent.key);
+        setQaParent(headings.length > 0 ? { ...parent, headings } : parent);
+      } catch {
+        setQaParent(parent);
+      } finally {
+        setQaSeeding(null);
+      }
       return;
     }
     setQaSeeding(parent.key);
@@ -589,8 +1001,12 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
     nested: boolean,
     stamp?: string,
     missingQa?: boolean,
-    /** Set on an improvement/bug that has sub-tasks of its own to fold. */
-    opts: { fold?: { open: boolean; count: number } } = {},
+    opts: {
+      /** Set on an improvement/bug that has sub-tasks of its own to fold. */
+      fold?: { open: boolean; count: number };
+      /** This row's round, for the "theo task FE cuối" prefill. */
+      siblings?: readonly IssueSummary[];
+    } = {},
   ) => {
     const role = taskRole(issue);
     const badge = rowBadge(issue);
@@ -665,28 +1081,37 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
             />
           </p>
         </div>
-        <Button
-          size="sm"
-          variant="ghost"
-          disabled={qaSeeding !== null}
-          title={
-            standaloneSource(issue)
-              ? 'Tạo task QA dưới issue này — hỏi AI của Jira để gợi ý tiêu đề'
-              : 'Tạo task QA dưới issue này'
-          }
-          onClick={() =>
-            void openQaDialog(
-              {
-                key: issue.key,
-                summary: issue.summary,
-                stamp: stamp ?? qaStamp([issue]),
-              },
-              standaloneSource(issue),
-            )
-          }
-        >
-          {qaSeeding === issue.key ? 'Đang hỏi AI…' : '+ QA'}
-        </Button>
+        {/* Only an improvement or bug gets its own button: that is the shape
+            that takes a QA sub-task directly (CLAUDE.md §1b). A story's
+            sub-tasks do not — their QA belongs to the story, and the story
+            header's button is where it is created. One per row there meant a
+            column of a dozen buttons, each one creating a QA under a sub-task
+            instead of under the story. */}
+        {standaloneSource(issue) ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={qaSeeding !== null}
+            title="Tạo task QA dưới issue này — hỏi AI của Jira để gợi ý tiêu đề"
+            onClick={() =>
+              void openQaDialog(
+                {
+                  key: issue.key,
+                  summary: issue.summary,
+                  stamp: stamp ?? qaStamp([issue]),
+                  ...(() => {
+                    const round = stamp ?? qaStamp([issue]);
+                    const fe = feSeed(opts.siblings ?? [issue], round);
+                    return fe ? { feTask: fe } : {};
+                  })(),
+                },
+                true,
+              )
+            }
+          >
+            {qaSeeding === issue.key ? 'Đang hỏi AI…' : '+ QA'}
+          </Button>
+        ) : null}
       </li>
     );
   };
@@ -866,6 +1291,25 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
           const allOn = keys.every((key) => selected.has(key));
           const picked = keys.filter((key) => selected.has(key)).length;
           const roles = new Set(items.map((issue) => taskRole(issue)));
+          // The BE button closes this story's BE sub-tasks outright, so it is
+          // offered only once they are all in Review — the point at which the
+          // FE's answer can only be "yes". One still in To Do or In Progress
+          // means Jame is not finished, and Done would be a lie about work that
+          // has not been handed over.
+          const beTasks = items.filter((issue) => taskRole(issue) === 'be');
+          const beReady = beTasks.length > 0 && beTasks.every((issue) => issue.status === REVIEW);
+          // The FE button only ever does To Do -> In Progress, so it offers
+          // exactly the tasks still in To Do and switches off when none are
+          // left. Unlike BE it does not wait for the whole role to line up: a
+          // story part-way through is the normal case — picking up the rest of
+          // its FE work is still the right move.
+          const fePending = items.filter(
+            (issue) => taskRole(issue) === 'fe' && issue.status === TO_DO,
+          );
+          // Both halves of step 4 are actionable, so the combined button is
+          // worth offering. When only one is, the single-role button next to it
+          // already covers the case and a disabled extra is just noise.
+          const bothReady = beReady && fePending.length > 0;
           return (
             <section key={story.parentKey} className="border-t border-line first:border-t-0">
               <header className="group flex items-center gap-2 bg-raised pr-4">
@@ -912,6 +1356,52 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
                   />
                 ) : null}
                 <span className="flex-1" />
+                {/* `relative` so the menu hangs off this button rather than the
+                    page; the row itself must not clip it. */}
+                <div className="relative shrink-0">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    title={`Lấy prompt cho ${story.parentKey}`}
+                    onClick={() =>
+                      setPromptFor((current) =>
+                        current === story.parentKey ? null : story.parentKey,
+                      )
+                    }
+                  >
+                    Lấy prompt
+                  </Button>
+                  {promptFor === story.parentKey ? (
+                    <PromptMenu
+                      onClose={() => setPromptFor(null)}
+                      onPickReport={() => {
+                        setPromptFor(null);
+                        void (async () => {
+                          const ok = await copyText(reportImagePrompt(storyUrl(story.parentKey)));
+                          if (!ok) {
+                            setError('Không copy được vào clipboard.');
+                            return;
+                          }
+                          setCopiedPrompt(story.parentKey);
+                          // Clears itself: the prompt is copied and gone, and a
+                          // tick left on the row would still be claiming it
+                          // after the clipboard has moved on to something else.
+                          window.setTimeout(() => setCopiedPrompt(null), 2000);
+                        })();
+                      }}
+                      onPickIntegrate={() => {
+                        setPromptFor(null);
+                        setIntegrateFor({
+                          key: story.parentKey,
+                          url: storyUrl(story.parentKey),
+                        });
+                      }}
+                    />
+                  ) : null}
+                </div>
+                {copiedPrompt === story.parentKey ? (
+                  <span className="shrink-0 text-xs text-success">✓ Đã copy</span>
+                ) : null}
                 {missingQa ? (
                   <Badge tone="warning" title={`Chưa có task QA_${round} cho vòng này`}>
                     chưa có QA
@@ -922,9 +1412,26 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
                 {roles.has('be') ? (
                   <Button
                     size="sm"
-                    variant="ghost"
-                    title="Chỉ chọn task BE của story này"
-                    onClick={() => selectRoleInStory(items, 'be')}
+                    variant={beReady ? 'secondary' : 'ghost'}
+                    disabled={!beReady || busy}
+                    title={
+                      beReady
+                        ? `Chuyển ${beTasks.length} task BE của story này sang Done`
+                        : 'Còn task BE chưa sang Review'
+                    }
+                    onClick={() =>
+                      setRoleMove({
+                        parentKey: story.parentKey,
+                        title: 'Chuyển hết sang Done',
+                        groups: [
+                          {
+                            role: 'BE',
+                            keys: beTasks.map((issue) => issue.key),
+                            toStatus: DONE,
+                          },
+                        ],
+                      })
+                    }
                   >
                     BE
                   </Button>
@@ -932,11 +1439,60 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
                 {roles.has('fe') ? (
                   <Button
                     size="sm"
-                    variant="ghost"
-                    title="Chỉ chọn task FE của story này"
-                    onClick={() => selectRoleInStory(items, 'fe')}
+                    variant={fePending.length > 0 ? 'secondary' : 'ghost'}
+                    disabled={fePending.length === 0 || busy}
+                    title={
+                      fePending.length > 0
+                        ? `Chuyển ${fePending.length} task FE của story này sang In Progress`
+                        : 'Không còn task FE nào ở To Do'
+                    }
+                    onClick={() =>
+                      setRoleMove({
+                        parentKey: story.parentKey,
+                        title: 'Chuyển hết task FE sang In Progress?',
+                        groups: [
+                          {
+                            role: 'FE',
+                            keys: fePending.map((issue) => issue.key),
+                            toStatus: IN_PROGRESS,
+                          },
+                        ],
+                      })
+                    }
                   >
                     FE
+                  </Button>
+                ) : null}
+                {/* Step 4 whole: confirm the BE work and pick up the FE work in
+                    one press. Shown only when both halves have something to do,
+                    since otherwise one of the two buttons beside it already
+                    says everything. */}
+                {bothReady ? (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={busy}
+                    title={`Chuyển ${beTasks.length} task BE sang Done và ${fePending.length} task FE sang In Progress`}
+                    onClick={() =>
+                      setRoleMove({
+                        parentKey: story.parentKey,
+                        title: 'Chuyển BE sang Done và FE sang In Progress?',
+                        groups: [
+                          {
+                            role: 'BE',
+                            keys: beTasks.map((issue) => issue.key),
+                            toStatus: DONE,
+                          },
+                          {
+                            role: 'FE',
+                            keys: fePending.map((issue) => issue.key),
+                            toStatus: IN_PROGRESS,
+                          },
+                        ],
+                      })
+                    }
+                  >
+                    BE &amp; FE
                   </Button>
                 ) : null}
                 {roles.has('qa') ? (
@@ -955,6 +1511,7 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
                 <Button
                   size="sm"
                   variant="ghost"
+                  disabled={qaSeeding !== null}
                   title={`Tạo task QA dưới ${story.parentKey}`}
                   onClick={() =>
                     // No AI for a story: see `openQaDialog`.
@@ -963,15 +1520,26 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
                         key: story.parentKey,
                         summary: story.parentSummary ?? story.parentKey,
                         stamp: round,
+                        rounds: roundsFor(story.items),
+                        ...(() => {
+                          const fe = feSeed(story.items, round);
+                          return fe ? { feTask: fe } : {};
+                        })(),
                       },
                       false,
                     )
                   }
                 >
-                  + QA
+                  {qaSeeding === story.parentKey ? 'Đang đọc US…' : '+ QA'}
                 </Button>
               </header>
-              {open ? <ul>{items.map((issue) => renderRow(issue, true, round))}</ul> : null}
+              {open ? (
+                <ul>
+                  {items.map((issue) =>
+                    renderRow(issue, true, round, undefined, { siblings: story.items }),
+                  )}
+                </ul>
+              ) : null}
             </section>
           );
         })}
@@ -1006,8 +1574,13 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
                       ...(shownKids.length > 0
                         ? { fold: { open, count: shownKids.length } }
                         : {}),
+                      siblings: family,
                     })}
-                    {open ? shownKids.map((kid) => renderRow(kid, true, round)) : null}
+                    {open
+                      ? shownKids.map((kid) =>
+                          renderRow(kid, true, round, undefined, { siblings: family }),
+                        )
+                      : null}
                   </Fragment>
                 );
               })}
@@ -1023,8 +1596,15 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
           defaultAssignee={active.mentions.find((m) => m.name === 'sney') ?? active.mentions[0]}
           onClose={() => setQaParent(null)}
           onCreated={(issue) => {
-            setQaParent(null);
-            setResults({ verb: 'Tạo', items: [{ key: issue.key, ok: true }] });
+            // Called once per sub-task: a story handed over three times
+            // creates three in one go. So the banner accumulates rather than
+            // being replaced, and the dialog is closed by itself when it is
+            // done, not here on the first success.
+            setResults((current) =>
+              current?.verb === 'Tạo'
+                ? { verb: 'Tạo', items: [...current.items, { key: issue.key, ok: true }] }
+                : { verb: 'Tạo', items: [{ key: issue.key, ok: true }] },
+            );
             // Show it before the reload finishes, so the "chưa có QA" badge
             // clears on the click rather than a request later.
             setIssues((current) =>
@@ -1032,8 +1612,69 @@ export function ActionsPage({ targets }: { targets: ReportTarget[] }) {
             );
             void load(active.id, { afterWrite: true, justCreated: [issue] });
           }}
+          onHandOff={async (keys) => {
+            // The rest of step 5: the FE work whose QA was just created moves
+            // to Review. Same path as the "Chuyển N task" button, so the
+            // stale-index fix (`justMoved`) applies here too — without it the
+            // reload would show the old status and look like nothing happened.
+            try {
+              const { results: outcome } = await api.transitionMany(keys, REVIEW);
+              // "Tạo xong 5/5 task" would be wrong when 3 were created and 2
+              // moved, so the banner switches to a verb covering both.
+              setResults((current) =>
+                current
+                  ? { verb: 'Xử lý', items: [...current.items, ...outcome] }
+                  : { verb: 'Chuyển', items: outcome },
+              );
+              const moved = new Map(
+                outcome.filter((result) => result.ok).map((result) => [result.key, REVIEW]),
+              );
+              await load(active.id, { afterWrite: true, justMoved: moved });
+            } catch (caught) {
+              setError(
+                caught instanceof Error
+                  ? `Tạo QA xong nhưng không chuyển được task FE: ${caught.message}`
+                  : 'Tạo QA xong nhưng không chuyển được task FE.',
+              );
+            }
+          }}
+        />
+      ) : null}
+
+      {integrateFor ? (
+        <IntegrateDialog
+          storyKey={integrateFor.key}
+          storyUrl={integrateFor.url}
+          onClose={() => setIntegrateFor(null)}
+          onFail={() => setError('Không copy được vào clipboard.')}
+        />
+      ) : null}
+
+      {roleMove ? (
+        <ConfirmDialog
+          title={roleMove.title}
+          busy={busy}
+          onCancel={() => setRoleMove(null)}
+          onConfirm={() => void moveRoleTasks(roleMove.groups)}
+          detail={
+            <>
+              Story <span className="font-mono text-ink">{roleMove.parentKey}</span>:
+              {roleMove.groups.map((group) => (
+                <p key={group.role} className="mt-1.5">
+                  <span className="text-ink">
+                    {group.keys.length} task {group.role}
+                  </span>{' '}
+                  → <span className="text-ink">{group.toStatus}</span>
+                  <span className="mt-0.5 block font-mono text-[11px]">
+                    {group.keys.join(', ')}
+                  </span>
+                </p>
+              ))}
+            </>
+          }
         />
       ) : null}
     </div>
   );
 }
+

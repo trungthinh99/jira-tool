@@ -1,4 +1,4 @@
-import type { IssueSummary } from './api/types';
+import type { IssueSummary, StoryHeading } from './api/types';
 
 export function cn(...classes: (string | false | null | undefined)[]): string {
   return classes.filter(Boolean).join(' ');
@@ -337,4 +337,142 @@ export function writeSeen(keys: Set<string>): void {
   } catch {
     // Private mode or a full quota — the badge is a convenience, not data.
   }
+}
+
+/**
+ * A QA title derived from the FE sub-task's own title.
+ *
+ * For a story whose BE raised a single FE task, that title already describes
+ * the work in the team's own words — better than anything the AI paraphrases
+ * and better than the generic "Test giao diện và chức năng". So it is reused
+ * verbatim, with only the four mechanical edits Bimo makes by hand:
+ *
+ *   FE_261102 (ALL): Thêm UI nhập/select end-user ...
+ *   QA_261102: Test thêm UI nhập/select end-user ...
+ *
+ * 1. `FE` becomes `QA`, keeping the stamp.
+ * 2. The scope note is dropped — `(ALL)`, but also `(UI)`, `(API)`.
+ * 3. `Test ` goes in front of the description.
+ * 4. Its first letter is lowercased, since it is no longer the first word.
+ *
+ * Step 4 only touches a lone capital: `API`, `UI` and `S/N` start real titles
+ * on this board and must survive, so a word that is all caps is left alone.
+ *
+ * Returns null when the title is not an `FE_...` one — the caller then keeps
+ * whatever it had.
+ */
+const FE_TITLE = /^\s*\[?\s*FE[_\s]*(\d{6})?\s*(?:\([^)]*\))?\s*[\]:]*\s*:?\s*/i;
+
+export function qaTitleFromFeTask(summary: string, stamp: string): string | null {
+  const match = FE_TITLE.exec(summary);
+  if (!match) return null;
+  const body = summary.slice(match[0].length).trim();
+  if (!body) return null;
+  return `QA_${match[1] ?? stamp}: Test ${lowerFirst(body)}`;
+}
+
+/**
+ * Lowercase a leading capital, unless the first word is an acronym.
+ *
+ * `API`, `UI` and `S/N` all open real sub-task titles on this board, and
+ * `s/N 이력조회` would be wrong. The word is taken up to the next space, so
+ * `S/N` is judged whole instead of as a one-letter `S`; punctuation is
+ * ignored when counting its letters.
+ */
+function lowerFirst(text: string): string {
+  const first = text.split(/\s/)[0] ?? '';
+  if (first.replace(/[^A-Za-z]/g, '').length > 1 && first === first.toUpperCase()) return text;
+  return text.charAt(0).toLowerCase() + text.slice(1);
+}
+
+/**
+ * The FE sub-task a QA title should be derived from, or null.
+ *
+ * "Last" is the latest handover round, matching `qaStamp()`. Only one FE task
+ * qualifies: with several, there is no single title to copy — that is a story
+ * split across screens, and the generic default is the honest answer.
+ */
+export function lastFeTask(siblings: readonly IssueSummary[]): IssueSummary | null {
+  const round = qaStamp(siblings);
+  const fe = siblings.filter(
+    (issue) => taskRole(issue) === 'fe' && (stampFromSummary(issue.summary) ?? round) === round,
+  );
+  return fe.length === 1 ? (fe[0] ?? null) : null;
+}
+
+/** One handover round of a story, with the FE work it covers. */
+export interface HandoverRound {
+  /** `YYMMDD`. */
+  stamp: string;
+  /** The FE sub-tasks carrying this stamp, newest key first. */
+  feTasks: IssueSummary[];
+  /** Whether this round already has its QA sub-task. */
+  hasQa: boolean;
+}
+
+/**
+ * Every round a story has been handed over in, newest first.
+ *
+ * A story is not handed over once: DT-198 carries `261028`, `261030` and
+ * `261102` side by side, each a separate batch of FE work that needs its own
+ * QA. `qaStamp()` answers a narrower question — which round a *new* QA belongs
+ * to — and collapses all three to the newest, so creating a QA from the story
+ * header could only ever cover `261102`.
+ *
+ * Only rounds with FE work are listed. A round of pure BE work has nothing for
+ * the FE to hand to QA, and offering it would invite a QA task for work this
+ * side never did.
+ */
+export function handoverRounds(siblings: readonly IssueSummary[]): HandoverRound[] {
+  const byStamp = new Map<string, IssueSummary[]>();
+  for (const issue of siblings) {
+    if (taskRole(issue) !== 'fe') continue;
+    const stamp = stampFromSummary(issue.summary);
+    if (!stamp) continue;
+    byStamp.set(stamp, [...(byStamp.get(stamp) ?? []), issue]);
+  }
+
+  return [...byStamp.entries()]
+    .sort(([a], [b]) => b.localeCompare(a))
+    .map(([stamp, feTasks]) => ({
+      stamp,
+      feTasks,
+      hasQa: siblings.some(
+        (issue) => taskRole(issue) === 'qa' && stampFromSummary(issue.summary) === stamp,
+      ),
+    }));
+}
+
+
+/**
+ * A QA title built from the story's own heading and summary.
+ *
+ * `qaTitleFromFeTask()` answers the easy case — one FE sub-task, whose title
+ * already describes the work. This covers the two where it cannot: a story with
+ * several FE sub-tasks has no single title to copy, and a story just written has
+ * none at all. What both do have is the heading the BA puts at the top of the
+ * description and the story's own summary:
+ *
+ *   [New] 02/11/2026        + "Quản lý / nhập S/N ... trong S/N입력"
+ *   QA_261102: Test giao diện và chức năng màn hình quản lý / nhập S/N ... trong S/N입력
+ *
+ *   [Update 12] 29/10/2026  + "Đóng gói đơn hàng (Packing ) 패킹"
+ *   QA_261029: Test giao diện và chức năng đóng gói đơn hàng (Packing ) 패킹 theo update 12
+ *
+ * The two differ in more than the suffix: a new story is a whole screen to
+ * test, so it reads "chức năng màn hình", while an update is a change to a
+ * screen that already exists and names the round instead — `theo update 12`
+ * tells the BA which block of the description to test against, which matters on
+ * DT-689 where thirteen rounds are stacked in one description.
+ *
+ * The summary's first letter is lowercased for the same reason as in
+ * `qaTitleFromFeTask()`: it is no longer the first word of the sentence. The
+ * acronym guard in `lowerFirst()` applies here too.
+ */
+export function qaTitleFromStory(summary: string, heading: StoryHeading): string | null {
+  const body = summary.trim();
+  if (!body) return null;
+  const head = `QA_${heading.stamp}: Test giao diện và chức năng`;
+  if (heading.update === null) return `${head} màn hình ${lowerFirst(body)}`;
+  return `${head} ${lowerFirst(body)} theo update ${heading.update}`;
 }

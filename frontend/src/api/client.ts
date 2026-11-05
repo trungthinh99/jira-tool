@@ -8,6 +8,8 @@ import type {
   ReportTarget,
   SlackConfig,
   SlackPing,
+  SlackReact,
+  StoryHeading,
   TransitionOption,
 } from './types';
 
@@ -66,6 +68,9 @@ export const api = {
   /** Sent once per day, after every project's report is up. */
   pingSlack: () => request<{ slack: SlackPing }>('/slack/ping', { method: 'POST' }),
 
+  /** React to Jame's recent "em đã tạo sub-task" messages. */
+  reactSlack: () => request<{ result: SlackReact }>('/slack/react', { method: 'POST' }),
+
   transitions: (issueKey: string) =>
     request<{ transitions: TransitionOption[] }>(
       `/issues/${encodeURIComponent(issueKey)}/transitions`,
@@ -99,6 +104,15 @@ export const api = {
    */
   qaSeed: (issueKey: string) =>
     request<QaSeed>(`/issues/${encodeURIComponent(issueKey)}/qa-seed`),
+
+  /**
+   * Every `[New]` / `[Update N]` heading in a story's description, for naming
+   * its QA tasks. One small read, unlike `qaSeed` — no AI is involved.
+   */
+  storyHeadings: (issueKey: string) =>
+    request<{ headings: StoryHeading[] }>(
+      `/issues/${encodeURIComponent(issueKey)}/story-headings`,
+    ),
 
   createSubtask: (parentKey: string, summary: string, assigneeAccountId?: string) =>
     request<{ issue: IssueSummary }>(

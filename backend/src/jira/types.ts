@@ -91,3 +91,18 @@ export interface RawUser {
   active?: boolean;
   accountType?: string;
 }
+
+/**
+ * The leading `[New]` / `[Update N]` heading of a story's description.
+ *
+ * The BA opens every round of a story with one, in red, as the first block —
+ * `[New] 02/11/2026` for a story just written, `[Update 12] 29/10/2026` for a
+ * revision. It carries the two facts a QA title needs: the round's date, and
+ * which update it is.
+ */
+export interface StoryHeading {
+  /** `YYMMDD`, converted from the heading's `DD/MM/YYYY`. */
+  stamp: string;
+  /** The update number, or null for a `[New]` story. */
+  update: number | null;
+}

@@ -200,6 +200,214 @@ trong 108ms, 0 lần gọi AI.
 là tiêu đề QA thật mô tả *thay đổi cụ thể*, còn summary của parent chỉ là *tên
 màn hình* — thông tin đó nằm ở description.
 
+### Checkbox "Theo task FE cuối"
+
+Story mà BE chỉ tách **một** task FE cho vòng này thì dialog QA hiện thêm một
+checkbox, **tick sẵn**: tiêu đề lấy thẳng từ task FE đó thay vì mẫu chung.
+
+```
+FE_261102 (ALL): Thêm UI nhập/select end-user và hiển thị ... trên phiếu xuất kho
+QA_261102:  Test thêm UI nhập/select end-user và hiển thị ... trên phiếu xuất kho
+```
+
+Bốn phép sửa, đúng cái Bimo vẫn làm tay — `qaTitleFromFeTask()` trong
+`utils.ts`: đổi `FE` → `QA` (giữ stamp), bỏ phần trong ngoặc (`(ALL)`, `(UI)`,
+`(API)`), thêm `Test ` vào trước, và viết thường chữ cái đầu.
+
+**Viết thường có ngoại lệ: từ đầu tiên viết hoa hết thì giữ nguyên.** `API`,
+`UI` và `S/N` đều mở đầu tiêu đề thật trên board — `s/N 이력조회` là sai.
+`lowerFirst()` xét cả từ tới dấu cách, nên `S/N` được xử như `S/N` chứ không
+phải chữ `S` một ký tự.
+
+**Chỉ hiện khi vòng hiện tại có đúng MỘT task FE** — `lastFeTask()`. Nhiều
+task FE thì không có tiêu đề nào để chép, đó là story chia theo nhiều màn, và
+mẫu chung mới là câu trả lời trung thực. Đo trên board thật: HWE-608/HWE-402/
+HWE-1148 và DT-83 hiện checkbox; HWE-1142 và HWE-1141 (2 task FE cùng vòng
+`261102`) không hiện.
+
+**"Cuối" là theo vòng bàn giao, không phải theo thứ tự danh sách.** DT-198 có 7
+task FE còn mở nhưng chỉ 1 cái thuộc vòng `261102`, 6 cái kia là vòng `261030`
+và `261028` chưa xong — lọc theo `qaStamp()` mới ra đúng cái cần chép. Đếm
+thẳng số task FE là sai.
+
+**Untick giữ lại chữ Bimo tự gõ.** Tick sẵn mà untick lại dựng đè mẫu chung thì
+mất sạch phần đã sửa, không undo được. Chỉ tiêu đề FE còn **nguyên vẹn** mới bị
+thay; sửa một chữ rồi untick thì phần sửa ở lại. Chiều tick thì luôn dựng lại
+từ task FE, nếu không checkbox không còn đúng nghĩa cái nhãn của nó.
+
+**Mỗi block chỉ có ô tiêu đề + checkbox, không dòng chú thích nào.** Đã thử
+hai lần và bỏ cả hai: in key + tiêu đề task FE dưới checkbox thì nó đè lên
+dòng kế; in `Ngày DD/MM/YYYY lấy theo stamp của task FE/BE cùng story` thì ba
+vòng thành ba dòng lặp, đẩy dialog dài gấp rưỡi. Ngày đã nằm ở nhãn
+`Tiêu đề DD/MM/YYYY` của chính block đó.
+
+**Nhãn ngày hiện ở MỌI block**, kể cả story một vòng — bỏ dòng chú thích rồi
+thì nó là thứ duy nhất nói tiêu đề thuộc vòng nào.
+
+Bẫy còn giữ: cảnh báo "(hôm nay — không thấy stamp ở sub-task)" **không được
+chỉ dựa vào việc stamp trùng hôm nay**. Vòng `261102` rơi đúng ngày 02/11 nên
+sẽ báo nhầm là không tìm thấy stamp; phải xét thêm `grounded` — có `rounds`
+(đọc được stamp từ tiêu đề sub-task) hoặc có heading trùng đúng stamp đang hiện
+tức là ngày đó là thật. Riêng `feTask` không đủ: story `[New]` nhiều task FE
+không có `feTask` nào mà vẫn biết chắc ngày.
+
+### Tiêu đề QA dựng từ US — hai trường hợp nhiều task FE
+
+`qaTitleFromFeTask()` chỉ chạy được khi vòng có **đúng một** task FE. Hai
+trường hợp còn lại lấy chữ từ **chính US**: dòng `[New]` / `[Update N]` mà BA
+viết ở đầu description, cộng tiêu đề của story.
+
+```
+[New] 02/11/2026       + "Quản lý / nhập S/N ... trong S/N입력"
+QA_261102: Test giao diện và chức năng màn hình quản lý / nhập S/N ... trong S/N입력
+
+[Update 12] 29/10/2026 + "Đóng gói đơn hàng (Packing ) 패킹"
+QA_261029: Test giao diện và chức năng đóng gói đơn hàng (Packing ) 패킹 theo update 12
+```
+
+`qaTitleFromStory()` trong `utils.ts`. Hai mẫu khác nhau có lý do: story mới là
+cả một màn hình phải test nên ghi "chức năng **màn hình**", còn update là sửa
+màn đã có nên ghi **vòng nào** — `theo update 12` cho BA biết phải đối chiếu
+khối nào trong description, việc đáng giá ở DT-689 nơi có 13 khối xếp trong một
+description. Chữ đầu tiêu đề story viết thường, dùng lại `lowerFirst()` nên
+`API`/`UI`/`S/N` vẫn an toàn.
+
+**Thứ tự ưu tiên: AI (Improvement/Bug) → task FE cuối → US → mẫu chung.** Nằm ở
+`seedTitle()`. Bỏ tick "Theo task FE cuối" thì rơi về tiêu đề dựng từ US của
+đúng vòng đó, không rơi thẳng về mẫu chung — đã đo trên DT-689.
+
+**Phải đọc MỌI dòng heading, không chỉ dòng đầu.** Đây là bug đã gặp lúc kiểm:
+`[Update N]` ở đầu description chỉ mô tả vòng **mới nhất**, mà một story mang
+nhiều vòng cùng lúc. Lấy số update của dòng đầu áp cho mọi vòng là khai sai với
+BA. Đo thật:
+
+| Story | Vòng | Update thật | Nếu lấy dòng đầu |
+| --- | --- | --- | --- |
+| DT-198 | `261102` / `261030` / `261028` | 3 / 2 / 1 | 3 / **3** / **3** |
+| DT-689 | `261029` / `261028` | 12 / 11 | 12 / **12** |
+| DT-676 | `261029` / `261028` | 9 / 7 | 9 / **9** |
+
+`parseStoryHeadings()` trong `backend/src/jira/service.ts` trả về **cả danh
+sách**, dialog khớp từng block theo `stamp`.
+
+**Heading phải đứng ĐẦU block, và phải có ngày ngay sau ngoặc.** Trong thân
+description đầy `[Update N]` dạng tham chiếu — `... như DT-676 [Update 8] — mỗi
+lần ...`, `thay phần ... ở [Update 11]` — chúng trỏ sang vòng **khác** và không
+có ngày. DT-689 có 13 cái loại này đối 13 heading thật. Thiếu hai điều kiện đó
+là bắt nhầm.
+
+**Cùng một ngày có thể có hai heading.** DT-676 ghi cả update 8 và update 9 vào
+29/10. Danh sách sort theo `stamp` giảm rồi `update` giảm, nên `.find()` lấy số
+lớn hơn — trạng thái cuối của vòng đó.
+
+**Không khớp theo màu.** Chữ `[Update N]` đúng là bôi đỏ, nhưng đỏ khác nhau
+theo dự án — `#ff5630` ở HWE, `#bf2600` ở DT — nên khớp theo hex sẽ chết im
+lặng ngày có dự án thứ ba chọn màu riêng. Khớp theo vị trí (block đầu) + mẫu
+ngoặc là đủ.
+
+**Đọc description bằng request riêng, KHÔNG thêm vào `ISSUE_FIELDS`.**
+Description rất lớn (DT-689 19KB, HWE-402 24KB) mà board trả về tới 100 issue,
+nên thêm vào payload là trả giá đó mỗi lần làm mới để phục vụ một dialog. Một
+request lúc mở dialog rẻ hơn, và nhánh story vốn **không** gọi AI nên không đụng
+6–10 giây đó. Nút đổi nhãn `Đang đọc US…` trong lúc chờ.
+
+**Lỗi phải rơi êm.** 6/17 story đang mở không có heading nào (HWE-375, HWE-565,
+cả 4 story SR — hai cái không có description) — đó là trạng thái **bình thường**,
+route trả `{"headings":[]}` chứ không 404. Đo thật: giả endpoint lỗi mạng thì
+dialog vẫn mở với mẫu chung `QA_261028: Test giao diện và chức năng `, không nút
+nào kẹt ở `Đang đọc US…`.
+
+Đã đo trên board thật (chặn hết lệnh ghi): HWE-1141/HWE-1142 ra đúng mẫu
+`[New]`; DT-50/DT-772 ra đúng mẫu `theo update N`; DT-198 ba vòng ra ba số
+update khác nhau; DT-689/DT-676/DT-83/HWE-608/HWE-402/HWE-1148 vẫn ưu tiên
+"Theo task FE cuối" như trước.
+
+### Nút "+ QA" chỉ ở Improvement/Bug và ở header story
+
+Sub-task của story **không** có nút `+ QA` — xét bằng `standaloneSource()`,
+tức `taskSource()` đọc work type. Story DT-198 có 15 sub-task thì trước đây
+hiện 15 nút xếp thành một cột dọc, mà bấm cái nào cũng tạo QA **dưới sub-task
+đó** thay vì dưới story. QA của story thuộc về story, nên chỗ tạo là nút ở
+**header**. Improvement/Bug thì giữ nút trên dòng, vì chúng nhận QA trực tiếp
+(mục 1b).
+
+Đã đo: 27 sub-task HWE + 77 sub-task TMS, không dòng nào còn nút.
+
+### Tạo nhiều task QA một lúc — mỗi vòng bàn giao một task
+
+**Một story không chỉ bàn giao một lần.** DT-198 mang cùng lúc `261028`,
+`261030` và `261102` — ba đợt FE riêng, mỗi đợt cần một task QA. `qaStamp()`
+trả về vòng **mới nhất**, nên nút `+ QA` ở header trước đây chỉ tạo được QA cho
+`261102`, hai vòng kia không có cách nào tạo.
+
+`handoverRounds()` trong `utils.ts` trả về **mọi** vòng, mới nhất trước. Dialog
+hiện một hàng badge (`Vòng bàn giao`), mỗi badge ghi ngày + số task FE, dấu ✓
+nếu vòng đó đã có QA, và dấu `+`/`−` để bật tắt.
+
+**Mặc định bật hết.** Bimo tạo cả ba task một lượt, nên mỗi vòng sinh sẵn một
+block tiêu đề (có checkbox "Theo task FE cuối" riêng), ngăn nhau bằng line
+dash. Bỏ vòng nào thì bấm `−`, thêm lại bấm `+`.
+
+- **Chỉ liệt kê vòng có task FE.** Vòng toàn BE thì FE không có gì để bàn cho
+  QA; liệt kê ra là mời tạo task QA cho việc mình không làm.
+- **Chỉ hiện hàng badge khi có >1 vòng.** Một vòng thì không có gì để chọn. Đo
+  thật: DT-198 ra 3 badge, DT-676/DT-689 ra 2, DT-83 và cả 5 story HWE không
+  hiện — dialog y hệt trước đây.
+- **Thêm lại thì block về đúng vị trí theo ngày**, không rơi xuống cuối. Danh
+  sách sort lại theo thứ tự vòng sau mỗi lần bật.
+- **Bật lại là dựng mới hoàn toàn**, mất phần đã gõ tay của vòng đó. Stamp nằm
+  **trong** tiêu đề nên không thể mang chữ cũ sang.
+- Checkbox "Theo task FE cuối" tính **theo từng vòng**: DT-198 vòng `261102` có
+  1 task FE nên hiện, hai vòng kia 3 task FE nên ẩn, rơi về mẫu chung.
+- Bỏ hết thì nút tạo bị khoá, chỗ block hiện dòng nhắc bấm `+`.
+
+**Ghi từng task một, KHÔNG `Promise.all`.** Đây là lệnh ghi thật; bắn song song
+vừa khó đọc trên lịch sử issue vừa dễ dính rate limit.
+
+**Lỗi giữa chừng không huỷ phần đã tạo** — không có transaction nào ở đây. Nên:
+một task lỗi thì **vẫn chạy tiếp** các task còn lại, `onCreated` báo từng task
+thành công ngay khi xong, dialog **ở lại** và chỉ giữ block của vòng lỗi, banner
+ghi rõ vòng nào lỗi vì sao. Bấm lại là chỉ tạo đúng vòng còn thiếu, không tạo
+trùng. Đo thật (giả POST, cố tình cho vòng **giữa** lỗi): 3 request đều được
+gửi, còn lại 1 block `261030`, banner `Tạo được 2/3 task. Lỗi — 30/10/2026: ...`
+
+**Bẫy ở `ActionsPage`: `onCreated` được gọi nhiều lần.** Trước đây nó
+`setQaParent(null)` đóng dialog ngay lần đầu và `setResults` ghi đè, nên tạo 3
+task chỉ báo 1. Giờ banner **cộng dồn**, dialog tự đóng khi xong hết, và
+`openQaDialog()` phải `setResults(null)` lúc mở — nếu không kết quả của story
+trước bị đếm sang story sau.
+
+### Checkbox "Chuyển task FE sang Review"
+
+Tạo task QA **chính là** lúc bàn giao, nên bước 5 của quy trình (mục 1b) có
+task FE sang `Review` ngay lúc đó. Mỗi block có một checkbox riêng, **tick
+sẵn**, nhãn kèm đúng key sẽ chuyển.
+
+- **Chuyển TẤT CẢ task FE của vòng, không chỉ cái dựng ra tiêu đề.** Vòng
+  `261030` của DT-198 có 3 task FE; tạo QA rồi chỉ chuyển 1 cái là để lại đúng
+  cái trạng thái nửa vời mà bước 5 sinh ra để tránh. Vì vậy `QaRound` mang
+  `fePending` (cả danh sách), khác `feTask` (chỉ có khi vòng đó đúng 1 task).
+- **Bỏ qua task đã ở Review.** Chuyển lại là một lệnh ghi không đổi gì.
+  Checkbox tự ẩn khi vòng không còn task nào để chuyển.
+- **Chỉ chuyển khi QA của vòng đó tạo THÀNH CÔNG.** Chuyển FE sang Review
+  trong khi QA tạo lỗi là khai khống một lần bàn giao chưa hề xảy ra. Đo thật
+  (giả POST, cho vòng `261030` lỗi): 4 task FE của hai vòng kia chuyển, 3 task
+  của vòng lỗi **không** đụng tới.
+- **Gom một lệnh `transitionMany` sau khi tạo xong hết**, không chuyển xen kẽ
+  từng vòng — và chạy qua `onHandOff` ở `ActionsPage` chứ không gọi API trong
+  dialog, để dùng chung đường transition sẵn có cùng bản vá index trễ
+  (`justMoved`). Thiếu nó thì reload hiện lại status cũ, trông như không chạy.
+- Improvement/Bug không có checkbox này: chúng không có sub-task FE nào để
+  chuyển, và `roundsOf()` trả `fePending: []` cho nhánh đó.
+
+**Bẫy thứ tự: phải `setError`/`setDrafts` TRƯỚC khi `await onHandOff()`.**
+`onHandOff` gọi `load()`, lần render đó đè lên hai state vừa set và nuốt mất —
+kết quả là lỗi không hiện, cả 3 block vẫn nằm nguyên như chưa bấm gì. Đã gặp
+thật khi kiểm.
+
+**Banner đổi động từ thành "Xử lý".** Tạo 3 + chuyển 7 mà vẫn ghi "Tạo xong
+10/10 task" là sai — chỉ 3 cái được tạo.
+
 ### Assignee mặc định là reporter — chỉ là mặc định
 
 `fetchReporter()` lấy người tạo Improvement làm assignee mặc định cho task QA.
@@ -277,6 +485,71 @@ QA con — tiêu đề gọi tên thứ mà section liệt kê.
   nay, `visible` không xét `collapsed`. Gập là cho đỡ rối mắt, không phải để
   loại khỏi phạm vi thao tác.
 
+### Nút "Lấy prompt" — hai prompt hay gõ lại cho AI
+
+Trên header mỗi story, ngay trước badge "chưa có QA". Bấm ra một popover nhỏ
+**ngay tại chỗ bấm** với hai lựa chọn. Đây là prompt gửi cho AI agent, **không
+ghi gì lên Jira** — nên không có bước xác nhận.
+
+Hai câu này Bimo gõ gần như y hệt mỗi lần, chỉ khác link story:
+
+1. **Báo cáo hình ảnh** — bấm là copy thẳng vào clipboard, không mở modal:
+   ```
+   Comment hình ảnh báo cáo vào các task FE đang In Progress trong <link story>
+   ```
+2. **Intergrate giao diện** — mở modal 2 input (Link figma, Màn hình) + textarea
+   dựng sẵn, có nút "Copy nội dung":
+   ```
+   User story và tài liệu API (trong comment) tại <link story>. Hãy cắt giao
+   diện và ghép api cho màn hình <tên màn hình> này: <link figma>
+   ```
+
+- **Trống CẢ HAI ô thì ra câu khác hẳn**, không phải câu cắt giao diện với hai
+  chỗ trống:
+  ```
+  User story và tài liệu API (trong comment) tại <link story>. Hãy thực hiện
+  cập nhật theo các tài liệu được cung cấp đi
+  ```
+  Không có tên màn hình lẫn link figma thì chẳng còn gì để cắt — câu kia sẽ ra
+  `cho màn hình này: ` cụt đuôi. Chỉ cần **một** ô có chữ là quay về câu cắt
+  giao diện. Đo thật trên HWE-17: trống → câu cập nhật; điền figma → câu cắt;
+  xoá lại còn khoảng trắng → về câu cập nhật.
+- **Chữ `màn hình` LUÔN có trong câu**, ô input chỉ ghi thêm *tên* màn hình vào
+  sau. Trước đây nó là giá trị dự phòng khi ô trống, nên điền tên vào thì ra
+  `cho S/N입력 này` — câu mất mất danh từ. `integratePrompt()` trong
+  `ActionsPage`. Đo thật: trống → `cho màn hình này:`; điền `S/N입력` →
+  `cho màn hình S/N입력 này:`; gõ toàn khoảng trắng → như trống, không thừa
+  dấu cách.
+- **Textarea cập nhật ngay khi gõ** và hiện ra cho đọc chứ không copy thẳng:
+  link figma là dán từ chỗ khác, nhìn câu hoàn chỉnh mới biết nó rơi đúng chỗ.
+- **Sửa tay được, và sửa rồi thì giữ.** Hai ô input chỉ là đường vào nhanh,
+  không phải đường duy nhất. Khi textarea đã bị gõ vào thì đổi input **không**
+  dựng đè lên nữa — cùng luật với checkbox "Theo task FE cuối" ở dialog QA: chỉ
+  phần **còn nguyên vẹn** mới bị thay, vì mất câu đã sửa là không undo được.
+  Nhãn hiện thêm link `(đã sửa tay — dựng lại)` để quay về bản dựng tự động;
+  bấm xong link tự mất. Mở lại dialog là bắt đầu sạch, không mang chữ cũ sang.
+  Đo thật: gõ thêm chữ vào textarea rồi đổi link figma → chữ gõ tay còn nguyên;
+  bấm "dựng lại" → ra bản mới theo figma vừa đổi; nút Copy gửi đúng bản đang
+  hiện trên màn.
+- **Link story tự dựng từ `active.reportIssueUrl`** (`storyUrl()`), vì payload
+  handover mang `url` của từng sub-task nhưng **không** có url của story, mà FE
+  cũng không biết host site từ đâu khác. Cùng cách mà InboxPage và ReportForm
+  đã làm.
+
+Vài chỗ về popover, đừng làm lại cho khác:
+
+- **Popover neo vào nút, không phải modal giữa màn.** Nó là chọn một trong hai,
+  mà cú bấm đã nằm sẵn trên story cần dùng — kéo mắt ra giữa màn để chọn là mất
+  mối liên hệ đó. Bọc nút trong `div.relative`, menu `absolute right-0 top-full`.
+  Đo thật: menu cách nút 4px, canh phải thẳng mép nút, không tràn màn hình.
+- **Có một lớp overlay trong suốt `fixed inset-0`** bắt cú bấm kế tiếp để đóng
+  menu. Bấm lại chính nút cũng đóng (toggle). Mỗi lúc chỉ **một** menu mở, bấm
+  story khác thì menu cũ đóng.
+- **Kiểm popover phải dùng chuột thật** (`page.mouse.click`), đừng bắn
+  `MouseEvent` tổng hợp vào `document.body`: event tổng hợp không đi qua overlay
+  nên kết quả đọc ra lung tung. Đã vấp đúng lỗi này lúc đo — chuột thật mới ra
+  đúng `mở → bấm ngoài đóng → mở lại → bấm nút đóng`.
+
 ### Nút copy tiêu đề
 
 Mỗi dòng story và mỗi dòng sub-task có nút `⧉` ngay **sau tiêu đề** (component
@@ -291,6 +564,89 @@ Hai điều đã vấp phải, đừng làm lại:
 - **Nút gập story không được `flex-1`.** Để `flex-1` thì nút copy bị đẩy sang
   tận mép phải cạnh badge, không còn nằm cạnh tiêu đề. Nút gập co theo nội
   dung, một `<span className="flex-1" />` ăn hết chỗ trống thay nó.
+
+### Nút BE và FE ở header story — chuyển cả vai bằng một bấm
+
+Bước 4 của quy trình (mục 1b) là hai nửa, mỗi nửa chỉ có **một** đích đến: task
+BE đã Review mà FE xem thấy chạy được thì sang `Done`, rồi task FE của mình sang
+`In Progress` để bắt đầu làm. Trước đây mỗi nửa phải tick hết dòng của vai đó →
+chọn trạng thái → bấm "Chuyển N task", ba bước cho một quyết định một đáp án,
+lặp cho từng story. Giờ nút `BE` và `FE` ở header làm cả ba.
+
+Nút `QA` **vẫn là chọn nhanh** như cũ — nó không có đích đến cố định (BA mới là
+người chuyển task QA sang Done, bước 6).
+
+Cả hai dùng chung `moveRoleTasks()` và `ConfirmDialog`; khác nhau đúng ba chỗ:
+điều kiện active, đích đến, và câu hỏi trong modal.
+
+| Nút | Active khi | Chuyển sang | Modal |
+| --- | --- | --- | --- |
+| `BE` | **tất cả** task BE đã ở `Review` | `Done` | "Chuyển hết sang Done" |
+| `FE` | còn **ít nhất một** task FE ở `To Do` | `In Progress` | "Chuyển hết task FE sang In Progress?" |
+
+**Hai luật active khác hình dạng, đừng "sửa cho nhất quán".** `BE` đòi cả vai
+phải sẵn sàng vì còn cái nào `To Do`/`In Progress` nghĩa là Jame chưa xong,
+chuyển Done là khai khống một lần bàn giao chưa xảy ra. `FE` thì chỉ làm đúng
+một việc `To Do → In Progress`, nên nó lấy **đúng các task đang To Do** và chỉ
+tắt khi không còn cái nào — story đang làm dở là chuyện bình thường, nhặt nốt
+phần còn lại vẫn đúng. Đo thật trên DT-676 (giả payload): 2/4 task FE đã
+`In Progress` thì nút ghi "Chuyển 2 task FE", request chỉ mang `DT-1421,
+DT-1419`.
+
+Tooltip lúc disable: `Còn task BE chưa sang Review` / `Không còn task FE nào ở
+To Do`. Bấm nút disable thì không mở modal và gửi 0 request.
+
+- **Modal xác nhận là bắt buộc**, hai nút Huỷ / Chuyển, liệt kê đúng các key sẽ
+  chuyển. Mọi lệnh ghi hàng loạt khác trên màn này đều phải tick dòng trước —
+  chính bước tick đó là lúc nhìn thấy mình sắp đụng vào gì. Nút một bấm không
+  có bước đó, nên modal thay chỗ. Đã đo cả hai nút: bấm Huỷ gửi **0** request.
+- **Chỉ chuyển task đọc ra đúng vai**, tức `taskRole()`. DT-676 có 5 dòng trong
+  nhóm nhưng một dòng là `DS_Ô chọn ngày...` (DT-1433, Luca tạo, không prefix
+  `BE_`) — modal liệt kê đúng 4 cái `BE_`, bỏ DT-1433 ra. Chuyển nhầm task của
+  người khác là đúng kiểu lỗi màn này phải tránh.
+- **Bỏ tick các task vừa chuyển.** Với `Done` thì bắt buộc: task rời board, để
+  key còn tick thì lần "Chuyển N task" sau sẽ gửi kèm một task không còn trên
+  màn hình — cùng bẫy đã gặp ở `run()`. Với `In Progress` thì dòng ở lại nên
+  vô hại, nhưng một dòng tự dưng được tick cũng là chuyện bất ngờ, nên xoá cả
+  hai. Đo thật: tick 1 dòng rồi bấm nút, badge từ `1 đã chọn` về `0 đã chọn`.
+- **Dùng chung `justMoved` của `run()`**, không viết lại đường transition. Đo
+  thật (giả POST thành công, cố tình cho `handover` trả danh sách cũ): nút BE
+  làm 4 dòng BE biến mất còn 4 dòng FE và DT-1433 ở lại; nút FE làm 4 dòng FE
+  đổi sang `In Progress` mà **vẫn ở trên board** — khác BE vì `In Progress`
+  không phải Done. Sau đó nút tự disable vì hết task To Do.
+- **Lỗi từng task vẫn báo riêng.** Giả một task bị workflow từ chối: banner ra
+  `Chuyển xong 3/4 task.` kèm `DT-1420: No transition to "Done"`, ba cái kia
+  vẫn chuyển.
+
+Lưu ý khi kiểm lại: trạng thái trên board thật đổi liên tục trong ngày. Sáng
+02/11 HWE-1141/1142/1148 còn `To Do` nên nút BE disable, tới trưa Jame chuyển
+hết sang `Review` thì cả ba enable. Nút disable không có nghĩa là code hỏng —
+tra `/handover` xem trạng thái thật trước đã.
+
+### Nút "BE & FE" — trọn bước 4 bằng một bấm
+
+Ngay sau nút `FE`. Bấm một cái làm **cả hai** nửa của bước 4: task BE sang
+`Done` **và** task FE sang `In Progress`. Hai nút `BE`, `FE` riêng vẫn giữ, cho
+lúc chỉ muốn làm một nửa.
+
+- **Chỉ hiện khi CẢ HAI nửa còn việc** (`bothReady = beReady && fePending.length
+  > 0`). Chỉ một nửa còn việc thì nút đơn bên cạnh đã nói đủ, thêm một nút mờ
+  nữa là rác. Đo thật: HWE-1141 (BE đã Done hết, FE đã In Progress hết) **không**
+  có nút; 4 story HWE còn lại và cả 6 story TMS đều có.
+- **Điều kiện active thừa hưởng từ hai nút đơn**, không đặt luật mới: BE đòi tất
+  cả đã ở `Review`, FE lấy đúng các task đang `To Do`.
+- **Gửi HAI request, không phải một.** Hai vai đi về hai trạng thái khác nhau
+  nên không gộp được vào một lệnh. `moveRoleTasks()` giờ nhận **mảng nhóm**
+  `{ keys, toStatus }` và chạy tuần tự.
+- **Gom kết quả rồi mới báo và reload MỘT lần.** Gọi `moveRoleTasks()` hai lượt
+  sẽ ra hai banner và hai lần `load()` nhấp nháy. Đo thật trên DT-676: 2 request
+  (`Done:4`, `In Progress:4`), banner gộp `Chuyển xong 8/8 task.`, 4 dòng BE rời
+  board còn 4 dòng FE ở lại và đổi sang `In Progress` — kiểm với `handover` cố
+  tình trả danh sách cũ, tức `justMoved` là thứ vá lại.
+- **Một nhóm lỗi không chặn nhóm kia.** Giả 1 task BE bị workflow từ chối: cả
+  hai request vẫn gửi, banner ra `Chuyển xong 7/8 task.` kèm tên task lỗi.
+- Modal liệt kê **từng nhóm một dòng** (`4 task BE → Done`, `4 task FE → In
+  Progress`) kèm key, vì một bấm giờ đụng hai loại việc.
 
 ### Giao việc hàng loạt
 
@@ -437,11 +793,12 @@ nhiều dự án, nên bấm đăng nhiều lần — nếu Slack gắn vào l�
 phải "vừa post lên PPP-354". Vì vậy:
 
 - `postReport()` **không** gọi Slack. Chỉ `POST /api/slack/ping` mới gửi.
-- Nút **"Nhắn tin Slack"** (màu `danger`) nằm **ngay dưới nút "Đăng báo cáo"**
-  trong cột phải của `ReportForm`, để trơn không box, và **luôn hiện** kể cả
-  chưa đăng gì. Đã thử đặt ở cuối trang và ẩn cho tới khi đăng xong — cả hai
-  đều hỏng: một ngày nhiều task đẩy nút xuống dưới hai màn hình cuộn, còn nút
-  chỉ hiện sau khi đăng thì lúc đi tìm sẽ không thấy đâu.
+- Nút **"Nhắn tin Slack"** (màu `danger`) nằm **ngay dưới nút "Đăng báo cáo"**,
+  và từ 02/11/2026 cả hai nằm **trong khối "Xem trước"** — cạnh đúng nội dung
+  chúng gửi đi. **Luôn hiện** kể cả chưa đăng gì. Đã thử đặt ở cuối trang và ẩn
+  cho tới khi đăng xong — cả hai đều hỏng: một ngày nhiều task đẩy nút xuống
+  dưới hai màn hình cuộn, còn nút chỉ hiện sau khi đăng thì lúc đi tìm sẽ không
+  thấy đâu.
 - Nhắn xong mới hiện `✓ Đã nhắn Slack.` bên dưới. Nhãn nút cố định nên dòng
   này là thứ duy nhất ngăn bấm lần hai — đừng bỏ. Tab nào đã đăng thì có ✓.
 - Nút **không bị khoá** khi chưa đăng — có hôm Bimo đăng tay trên Jira rồi chỉ
@@ -460,6 +817,8 @@ Cấu hình ở `backend/.env`:
 | `SLACK_BOT_TOKEN` | Bot token (`xoxb-...`), chỉ là phương án dự phòng |
 | `SLACK_REPORT_CHANNEL` | Channel ID dạng `C...` — hiện là `#dev-team` (`C09MJAZT1CL`) |
 | `SLACK_REPORT_MESSAGE` | Nội dung tin nhắn, đổi được mà không phải sửa code |
+| `SLACK_REACT_CHANNELS` | Kênh quét cho nút "React slack" — mặc định dob-tms + hwashin-erp |
+| `SLACK_REACT_USER` | Slack user id của Jame, chủ các tin được react |
 
 **Gửi bằng user token, không phải bot.** Bimo muốn tin nhắn là *mình* báo cáo,
 không phải một con bot nhắn hộ — bot thì Slack gắn nhãn `APP` cạnh tên và hiện
@@ -491,6 +850,125 @@ viên của kênh, nếu không Slack trả `not_in_channel`.
 
 Hiện cả ba dự án dùng chung một kênh. Muốn tách kênh theo dự án thì thêm field
 vào `REPORT_TARGETS` (mục 2) chứ đừng đẻ bảng tra song song.
+
+### Nút "DM & Report all project" — làm cả ngày bằng một bấm
+
+Một ngày thường đụng 2–3 dự án, mỗi cái phải sang tab của nó rồi bấm "Đăng báo
+cáo", xong mới bấm Slack. Nút này làm hết: **đăng cho mọi dự án có task trong
+ngày**, rồi nhắn Slack **một** tin.
+
+Bố cục đi kèm: hai nút "Đăng báo cáo vào ..." và "Nhắn tin Slack" nằm **trong**
+khối Xem trước, cạnh nội dung chúng gửi; nút gộp nằm **trên hàng tab**, ngay sau
+`→ PPP-xxx`. Nó thao tác trên **mọi** dự án nên không thuộc về khối xem trước
+của một dự án — và **không cần bấm "Dựng lại"** của dự án nào trước, vì nó tự
+dựng payload chứ không đọc bản preview. Đã đo: preview còn nguyên dòng
+`Bấm "Dựng lại"...` mà bấm nút vẫn đăng đủ 15 task HWE + 7 task TMS.
+
+Dòng `Cần ít nhất 1 task và 1 dòng Next task.` bỏ hẳn — ngày mới mở ra chưa có
+task là chuyện bình thường chứ không phải lỗi, nên nó hiện gần như mỗi lần vào
+màn. Lý do nút tắt chuyển vào `title` của nút.
+
+**Nút per-project KHÔNG bỏ.** Nút gộp dựng payload của các tab *không mở* từ
+**mặc định** (xem dưới), nên muốn sửa tay dự án nào thì vẫn phải sang tab đó.
+
+- **Mỗi dự án một payload riêng, mention riêng.** Đo thật ngày 28/10 (giả POST):
+  HWE 15 task mention `@Ruby @sney` vào PPP-341, TMS 7 task mention
+  `@Luca @Ruby` vào PPP-226 — đúng bảng mục 2. Trộn mention là lỗi nghiệp vụ,
+  không phải lỗi hiển thị.
+- **Chỉ đăng dự án CÓ task.** SportsRab 0 task thì bỏ qua, không đăng comment
+  rỗng. Nhãn nút ghi sẵn số: `DM & Report all project (2)`, tooltip liệt
+  kê tên. Không dự án nào có task thì nút disable với tooltip
+  `Chưa dự án nào có task trong ngày`.
+- **Đăng tuần tự, KHÔNG `Promise.all`.** Lệnh ghi thật — bắn song song vừa khó
+  đọc trên lịch sử issue vừa dễ dính rate limit. Cùng quy tắc với dialog QA.
+- **Slack chỉ gửi khi đăng được ÍT NHẤT một báo cáo**, và luôn sau khi đăng
+  xong. Nhắn "em báo cáo rồi nha chị" trong khi mọi comment đều lỗi là báo một
+  việc chưa xảy ra. Đo thật: giả **cả hai** lỗi → `/api/slack/ping` **không**
+  được gọi, banner `Đăng được 0/2 báo cáo...`, không tab nào có ✓. Giả **một**
+  lỗi → Slack vẫn gửi, HWE có ✓, TMS không, banner `Đăng được 1/2 báo cáo.
+  Lỗi — TMS: Jira từ chối`. Bấm nút riêng của TMS để đăng lại.
+- **Lỗi giữa chừng không dừng vòng lặp**, dự án sau vẫn đăng.
+
+**Bẫy kiến trúc: `ReportForm` bị remount theo tab (qua `key`), nên chỉ tab đang
+mở mới có form giữ state.** Nút gộp nằm ở `ReportPage` vì nó cần mọi dự án, mà
+page thì không đọc được row/`Next task`/% của các tab chưa mở. Vì vậy
+`buildPayload()` dựng lại payload cho chúng **y như lúc form tự seed**: task
+trong ngày của project đó ở `defaultPercent()`, `Next task` đọc ngược từ báo cáo
+gần nhất (lỗi thì rơi về `defaultNextTasks`), mention của target.
+
+Hệ quả phải nhớ: **nút gộp gửi giá trị mặc định, không phải giá trị sửa tay** —
+trừ tab đang mở. Tab đang mở đi qua `liveDraft`: `ReportForm` đẩy payload hiện
+tại lên page qua `onDraftChange`, nên nó được gửi **đúng như trên màn hình**. Đo
+thật: bỏ tick 1 dòng → gửi 14/15 task; sửa HWE-967 thành 55% → payload mang
+`percent: 55`.
+
+`onDraftChange` phải trả `null` lúc unmount, nếu không draft của tab cũ sẽ được
+gửi làm báo cáo của tab sau. Và prop truyền xuống phải là **hàm ổn định**
+(`setLiveDraft`), không phải lambda inline — effect phụ thuộc vào nó nên lambda
+mới mỗi render sẽ thành vòng lặp vô hạn.
+
+### Nút "React slack" — thả reaction vào tin tự động của Jame
+
+Ngay sau nút "DM & Report all project". Jame có bot nhắn tự động vào kênh dự án
+mỗi khi tạo sub-task; tin đó cần được thấy chứ không cần trả lời, nên việc duy
+nhất là thả một reaction. Nút này làm hàng loạt.
+
+| Thứ | Giá trị |
+| --- | --- |
+| Jame | `U0A2PE5Q0LB` (`SLACK_REACT_USER`) |
+| Kênh | `C0ATW99QH9B` (dob-tms), `C0BJQ7QFPPT` (hwashin-erp) — `SLACK_REACT_CHANNELS` |
+| Reaction | random `:+1:` / `:eyes:` / `:raised_hands:` |
+
+**Scope đã cài xong ngày 02/11/2026.** Ngoài `chat:write`, token cần thêm ba
+scope ở **User Token Scopes** (không phải Bot) rồi **Reinstall app**:
+
+| Scope | Để làm gì |
+| --- | --- |
+| `groups:history` | đọc tin trong kênh **private** (cả hai kênh đều có ổ khoá) |
+| `reactions:write` | thả reaction |
+| `reactions:read` | biết tin nào mình đã thả rồi |
+
+Thiếu scope thì Slack trả `missing_scope` kèm danh sách cần — `readSlackBody()`
+dịch sẵn câu đó ra tiếng Việt kèm tên scope, đừng rút gọn thành lỗi chung.
+
+- **Jame dùng HAI mẫu câu khác nhau theo kênh — đừng khớp một mẫu.** Đây là bug
+  đã gặp thật: bản đầu chỉ bắt mẫu của hwashin-erp nên dob-tms react được **0**
+  tin, trong khi hwashin-erp ra đủ 5.
+
+  ```
+  hwashin-erp: <@MOBi> em đã tạo sub-task cho anh trong <link> rồi nha
+  dob-tms:     <@MOBi> em tạo xong sub-task của <link> cho anh rồi nha
+  ```
+
+  Phần giữa chính là chỗ chứa link nên đổi theo từng story. `SUBTASK_LINE` chỉ
+  khớp hai thứ cả hai mẫu đều có: chữ `sub-task` và đuôi `rồi nha`.
+- **BẮT BUỘC xét tin có mention mình.** Nới regex ra rồi thì nó bắt luôn
+  `<@U0AJ9AF01A5> anh có tạo sub-task của ...` — Jame nhắn cho **người khác**,
+  14 tin trong 30 ngày trên dob-tms. Thả reaction vào đó là trả lời hộ việc bàn
+  giao của người ta. So `text.includes('<@' + meId + '>')` với id lấy từ
+  `auth.test`.
+
+  Đo trên 126 tin/30 ngày: khớp câu thôi ra 109 tin; thêm điều kiện mention còn
+  **95**, loại đúng 14 tin của người khác và 17 tin thường (chuyển stage, IP,
+  docs).
+- **Chỉ nhìn lại 2 ngày** (`sinceDays = 2`): mục đích là trả lời tin hôm nay,
+  cộng hôm qua cho trường hợp bấm vào sáng hôm sau. **Không có cửa sổ tương
+  lai** — tin không đến từ ngày mai.
+- **Bỏ qua tin ĐÃ CÓ reaction CỦA MÌNH**, không phải "đã có reaction nào đó".
+  Tin của Jame hay được người khác thả 👀; coi đó là xong thì tin đó vĩnh viễn
+  không có reaction của Bimo. `alreadyReacted()` so theo `user_id` của chính
+  token (`auth.test`).
+- **Bấm hai lần liên tiếp là vô hại**: lần sau đếm hết vào `skipped`. Nếu có
+  race thì `reactions.add` trả `already_reacted`, cũng tính là skipped chứ
+  không phải lỗi.
+- **Một kênh lỗi không làm mất kênh kia** — lỗi gom theo từng kênh rồi báo
+  cuối, vòng lặp vẫn chạy tiếp.
+- **Đã chạy thật ngày 02/11/2026**: lần đầu `reacted: 7, skipped: 0` (2 tin
+  dob-tms + 5 tin hwashin-erp), emoji ra random thật — `raised_hands` ×4,
+  `+1` ×2, `eyes` ×1. Bấm lần hai ra `reacted: 0, skipped: 7`, không thả
+  trùng.
+- Banner ghi `✓ Đã react N tin, bỏ qua M tin đã react.`; lỗi thì in nguyên văn
+  câu Slack trả về (đã dịch sẵn `missing_scope` kèm tên scope còn thiếu).
 
 ### Quy ước phần trăm
 

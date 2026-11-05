@@ -5,6 +5,7 @@ import type {
   JiraUser,
   Mention,
   PostedReport,
+  ReportPayload,
   ReportTarget,
   SlackPing,
 } from '../api/types';
@@ -35,6 +36,12 @@ interface Props {
   onPosted: (result: PostedReport) => void;
   /** Null when Slack is not configured; the button is then not rendered. */
   slack: SlackButton | null;
+  /**
+   * Report this form's payload up as it changes, so the bulk action can send
+   * the open tab exactly as it reads rather than rebuilding it from defaults
+   * and dropping any hand edits.
+   */
+  onDraftChange?: (payload: ReportPayload | null) => void;
 }
 
 /**
@@ -58,6 +65,7 @@ export function ReportForm({
   posted,
   onPosted,
   slack,
+  onDraftChange,
 }: Props) {
   const [rows, setRows] = useState<TaskRow[]>([]);
   const [nextTasks, setNextTasks] = useState('');
@@ -163,6 +171,14 @@ export function ReportForm({
   );
 
   const canSubmit = payload.todayTasks.length > 0 && payload.nextTasks.length > 0;
+
+  // Keep the page's copy of this tab's draft current, and clear it on unmount:
+  // this form is remounted on every tab switch, and a draft left behind would
+  // be sent as the *next* project's report.
+  useEffect(() => {
+    onDraftChange?.(canSubmit ? payload : null);
+    return () => onDraftChange?.(null);
+  }, [payload, canSubmit, onDraftChange]);
 
   const update = useCallback((key: string, patch: Partial<TaskRow>) => {
     setRows((current) =>
@@ -374,16 +390,62 @@ export function ReportForm({
               </Button>
             }
           />
-          <div className="p-4">
+          <div className="space-y-3 p-4">
             <pre className="scrollbar-thin max-h-[380px] overflow-auto whitespace-pre-wrap rounded border border-line bg-canvas p-3 font-mono text-xs leading-relaxed">
               {preview ?? 'Bấm "Dựng lại" để xem nội dung sẽ đăng.'}
             </pre>
-            <p className="mt-2 text-xs text-muted">
+            <p className="text-xs text-muted">
               Mention:{' '}
               {mentions.length > 0
                 ? mentions.map((mention) => `@${mention.name}`).join(' ')
                 : 'không tag ai'}
             </p>
+
+            {/* The two single-project writes sit inside the preview, next to
+                the text they send. "DM & Report all project" in the tab row
+                does both for every project at once; these stay for the day
+                only one tab needs redoing, or needs hand-edited values. */}
+            <Button
+              variant="primary"
+              className="w-full"
+              disabled={!canSubmit || posting}
+              // Nothing says why the button is off any more — the line that
+              // did was noise on every freshly opened day, when having no task
+              // yet is the normal state rather than a problem. The tooltip
+              // answers for the rare case where it is not obvious.
+              title={canSubmit ? undefined : 'Cần ít nhất 1 task và 1 dòng Next task.'}
+              onClick={() => void submit()}
+            >
+              {posting
+                ? 'Đang đăng…'
+                : posted
+                  ? `Đăng lại vào ${target.reportIssueKey}`
+                  : `Đăng báo cáo vào ${target.reportIssueKey}`}
+            </Button>
+
+            {slack ? (
+              <>
+                <Button
+                  className="w-full"
+                  variant="danger"
+                  disabled={slack.pinging}
+                  onClick={() => void slack.onSend()}
+                  title={slack.message}
+                >
+                  {slack.pinging ? 'Đang gửi…' : 'Nhắn tin Slack'}
+                </Button>
+
+                {/* Only spoken up about once it has happened — the button says
+                    nothing about whether the message went out, and a second
+                    click would ping the channel twice. */}
+                {slack.ping?.sent ? (
+                  <p className="text-center text-xs text-success">✓ Đã nhắn Slack.</p>
+                ) : null}
+                {slack.ping?.error ? (
+                  <p className="text-center text-xs text-danger">{slack.ping.error}</p>
+                ) : null}
+              </>
+            ) : null}
           </div>
         </Card>
 
@@ -403,48 +465,6 @@ export function ReportForm({
           </div>
         ) : null}
 
-        <Button
-          variant="primary"
-          className="w-full"
-          disabled={!canSubmit || posting}
-          onClick={() => void submit()}
-        >
-          {posting
-            ? 'Đang đăng…'
-            : posted
-              ? `Đăng lại vào ${target.reportIssueKey}`
-              : `Đăng báo cáo vào ${target.reportIssueKey}`}
-        </Button>
-
-        {!canSubmit ? (
-          <p className="text-center text-xs text-muted">
-            Cần ít nhất 1 task và 1 dòng Next task.
-          </p>
-        ) : null}
-
-        {slack ? (
-          <>
-            <Button
-              className="w-full"
-              variant="danger"
-              disabled={slack.pinging}
-              onClick={() => void slack.onSend()}
-              title={slack.message}
-            >
-              {slack.pinging ? 'Đang gửi…' : 'Nhắn tin Slack'}
-            </Button>
-
-            {/* Only spoken up about once it has happened — the button says
-                nothing about whether the message went out, and a second click
-                would ping the channel twice. */}
-            {slack.ping?.sent ? (
-              <p className="text-center text-xs text-success">✓ Đã nhắn Slack.</p>
-            ) : null}
-            {slack.ping?.error ? (
-              <p className="text-center text-xs text-danger">{slack.ping.error}</p>
-            ) : null}
-          </>
-        ) : null}
       </div>
     </div>
   );

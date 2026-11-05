@@ -11,6 +11,7 @@ import type {
   RawUser,
   SearchResponse,
   SlackPing,
+  StoryHeading,
   TransitionOption,
 } from './types.js';
 
@@ -163,6 +164,97 @@ export async function fetchCurrentUser(): Promise<JiraUser> {
     accountId: raw.accountId ?? '',
     displayName: raw.displayName ?? '',
   };
+}
+
+/**
+ * Every `[New]` / `[Update N]` heading in a story's description, newest first.
+ *
+ * The BA opens each round of a story with one, in red: `[New] 02/11/2026` when
+ * the story is first written, `[Update 12] 29/10/2026` for each revision after
+ * that. Both facts in it are needed to name a QA task for a story whose BE
+ * split the round across several FE sub-tasks, where there is no single FE
+ * title to copy from.
+ *
+ * **All** of them are read, not just the first, because a story is handed over
+ * in several rounds at once and each needs its own number. DT-198 carries
+ * rounds `261028`, `261030` and `261102`, and its headings date update 1 to
+ * 28/10, update 2 to 30/10 and update 3 to 02/11 — so naming every round after
+ * the top heading would tell the BA to test "update 3" for work that is
+ * update 1. Same on DT-689, where round `261028` is update 11, not the 12 at
+ * the top.
+ *
+ * A heading must start its block. That is what separates it from the
+ * cross-references filling the body (`... như DT-676 [Update 8] — mỗi lần ...`,
+ * `thay phần ... ở [Update 11]`), which name *other* rounds mid-sentence:
+ * DT-689 has 13 bare `[Update N]` mentions against its 13 real headings.
+ * Requiring a date right after the bracket is the second filter.
+ *
+ * The colour is deliberately not matched. It is red in both projects but a
+ * different red — `#ff5630` on HWE, `#bf2600` on DT — so keying on the hex
+ * would quietly stop working the day a third project picks its own shade.
+ *
+ * Returns an empty list for a story with no heading (HWE-375, HWE-565 and all
+ * four open SR stories have none, two of them no description at all). That is
+ * an ordinary state, not an error: the caller falls back to the generic title.
+ */
+export function parseStoryHeadings(description: unknown): StoryHeading[] {
+  const found: StoryHeading[] = [];
+
+  for (const block of blockTexts(description)) {
+    const match = /^\s*\[\s*(?:(New)|Update\s*(\d+))\s*\]\s*(\d{1,2})\/(\d{1,2})\/(\d{4})/i.exec(
+      block,
+    );
+    if (!match) continue;
+    const [, isNew, update, day, month, year] = match;
+    if (!day || !month || !year) continue;
+    found.push({
+      stamp: `${year.slice(-2)}${month.padStart(2, '0')}${day.padStart(2, '0')}`,
+      update: isNew ? null : Number(update),
+    });
+  }
+
+  // Newest first. The description is already written that way, but a round can
+  // carry two headings (DT-676 dates both update 8 and update 9 to 29/10), and
+  // the later number is the round's final state — so ordering by update rather
+  // than by position puts the right one first for a per-stamp lookup.
+  return found.sort((a, b) => b.stamp.localeCompare(a.stamp) || (b.update ?? -1) - (a.update ?? -1));
+}
+
+/**
+ * The plain text of each top-level block of a description.
+ *
+ * Jira returns the description as ADF, and a heading is styled — red, bold,
+ * sometimes inside a heading node — so its text arrives split across several
+ * `text` nodes that have to be joined before the brackets can be matched.
+ */
+function blockTexts(description: unknown): string[] {
+  if (!description || typeof description !== 'object') return [];
+  const content = (description as { content?: unknown[] }).content;
+  if (!Array.isArray(content)) return [];
+  return content.map((block) => flatten(block).trim()).filter((text) => text.length > 0);
+}
+
+function flatten(node: unknown): string {
+  if (!node || typeof node !== 'object') return '';
+  const typed = node as { type?: string; text?: string; content?: unknown[] };
+  if (typed.type === 'text') return typed.text ?? '';
+  return (typed.content ?? []).map(flatten).join('');
+}
+
+/**
+ * One story's `[New]` / `[Update N]` headings, newest first.
+ *
+ * Fetched on its own rather than carried on the handover board: a description
+ * is large (DT-689's is 19KB, HWE-402's 24KB) and the board returns up to a
+ * hundred issues, so putting it in `ISSUE_FIELDS` would pay that cost on every
+ * refresh to serve one dialog. One request when the dialog opens is cheaper,
+ * and the story path makes no AI call to begin with.
+ */
+export async function fetchStoryHeadings(issueKey: string): Promise<StoryHeading[]> {
+  const raw = await jiraFetch<{ fields?: { description?: unknown } }>(
+    `/rest/api/3/issue/${encodeURIComponent(issueKey)}?fields=description`,
+  );
+  return parseStoryHeadings(raw.fields?.description);
 }
 
 /**

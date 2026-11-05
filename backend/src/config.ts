@@ -123,6 +123,16 @@ export const config = {
     token: process.env.SLACK_USER_TOKEN || process.env.SLACK_BOT_TOKEN || '',
     channel: process.env.SLACK_REPORT_CHANNEL ?? '',
     message: process.env.SLACK_REPORT_MESSAGE ?? 'em báo cáo rồi nha chị',
+    /**
+     * Channels scanned for Jame's "em đã tạo sub-task" messages, and his user
+     * id. Configurable because they are workspace facts, not code — a new
+     * project means a new channel here, not an edit to the scanner.
+     */
+    reactChannels: (process.env.SLACK_REACT_CHANNELS ?? 'C0ATW99QH9B,C0BJQ7QFPPT')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean),
+    reactUser: process.env.SLACK_REACT_USER ?? 'U0A2PE5Q0LB',
   },
   /** Dev origins allowed to call this proxy. */
   corsOrigins: (process.env.CORS_ORIGINS ?? 'http://localhost:5180')
